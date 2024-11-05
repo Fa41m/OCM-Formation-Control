@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
+from PSO import pso
+
 # Parameters
 num_robots = 7      # Number of robots
 num_steps = 300     # Number of time steps
@@ -17,8 +19,21 @@ num_checkpoints = 5 # Number of checkpoints (must be at least 2)
 # Generate random checkpoints with distinct start and end positions
 np.random.seed(21)  # For reproducibility
 checkpoints = [np.random.rand(2) * width for _ in range(num_checkpoints)]
-start_checkpoint = checkpoints[0]
-end_checkpoint = checkpoints[-1]
+
+# Parameters for PSO
+num_particles = 30  # Number of particles in the swarm
+num_iterations = 100  # Number of PSO iterations
+inertia = 0.5
+cognitive_coeff = 1.5
+social_coeff = 1.5
+
+# Obtain optimized route using PSO
+optimal_route = pso(checkpoints, num_particles, num_iterations, inertia, cognitive_coeff, social_coeff)
+
+# Redefine start, intermediate, and end checkpoints based on optimized route
+start_checkpoint = optimal_route[0]
+intermediate_checkpoints = optimal_route[1:-1]
+end_checkpoint = optimal_route[-1]
 
 # Initialize positions in a circular shape around the start checkpoint
 def initialize_positions(num_robots, start_position, buffer_radius):
@@ -33,13 +48,13 @@ def initialize_positions(num_robots, start_position, buffer_radius):
 positions = initialize_positions(num_robots, start_checkpoint, buffer_radius)
 headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
 
-# Calculate the moving center based on the frame number and current checkpoint
-def get_moving_center(frame, num_steps, checkpoints):
-    total_segments = len(checkpoints) - 1
+# Calculate the moving center based on the frame number and optimized route
+def get_moving_center(frame, num_steps, route):
+    total_segments = len(route) - 1
     segment_length = num_steps // total_segments
     current_segment = min(frame // segment_length, total_segments - 1)
     t = (frame % segment_length) / segment_length
-    return (1 - t) * checkpoints[current_segment] + t * checkpoints[current_segment + 1]
+    return (1 - t) * route[current_segment] + t * route[current_segment + 1]
 
 # Calculate positions on the moving circle for each robot
 def get_circle_positions(moving_center, radius, num_robots):
@@ -95,18 +110,17 @@ fig, ax = plt.subplots()
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
 scat_start = ax.scatter(start_checkpoint[0], start_checkpoint[1], c='green', marker='o', s=100, label='Start')
 scat_end = ax.scatter(end_checkpoint[0], end_checkpoint[1], c='red', marker='x', s=100, label='End')
-intermediate_checkpoints = checkpoints[1:-1]
 scat_intermediate = ax.scatter(*zip(*intermediate_checkpoints), c='orange', marker='s', s=60, label='Intermediate Checkpoints')
 
 ax.set_xlim(0, width)
 ax.set_ylim(0, width)
-ax.set_title("Swarm Navigation through Multiple Checkpoints")
+ax.set_title("Swarm Navigation through Optimized Route")
 ax.legend()
 
 # Animation update function
 def animate(frame):
     global positions, headings
-    moving_center = get_moving_center(frame, num_steps, checkpoints)
+    moving_center = get_moving_center(frame, num_steps, optimal_route)
     radius = buffer_radius * 2.0 / np.sin(np.pi / num_robots)
     circle_positions = get_circle_positions(moving_center, radius, num_robots)
     
