@@ -3,21 +3,24 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Parameters
-num_robots = 7     # Number of robots
-num_steps = 300    # Number of time steps
+num_robots = 7      # Number of robots
+num_steps = 300     # Number of time steps
 alpha = 0.1         # Weight for repulsion force
 K = 0.2             # Alignment strength
-C = 0.05             # Cohesion strength
-width = 20        # Width of the 2D space
-buffer_radius = 0.5     # Minimum distance between robots
-sensing_radius = 5.0    # Sensing radius for neighbors
-constant_speed = 0.2    # Constant speed for all robots
+C = 0.05            # Cohesion strength
+width = 20          # Width of the 2D space
+buffer_radius = 0.5 # Minimum distance between robots
+sensing_radius = 5.0 # Sensing radius for neighbors
+constant_speed = 0.2 # Constant speed for all robots
+num_checkpoints = 5 # Number of checkpoints (must be at least 2)
 
-# Define start and end positions
-start_position = np.array([width * 0.25, width * 0.25])
-end_position = np.array([width * 0.75, width * 0.75])
+# Generate random checkpoints with distinct start and end positions
+np.random.seed(21)  # For reproducibility
+checkpoints = [np.random.rand(2) * width for _ in range(num_checkpoints)]
+start_checkpoint = checkpoints[0]
+end_checkpoint = checkpoints[-1]
 
-# Initialize positions in a circular shape around the start position
+# Initialize positions in a circular shape around the start checkpoint
 def initialize_positions(num_robots, start_position, buffer_radius):
     radius = buffer_radius * 2.0 / np.sin(np.pi / num_robots)
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
@@ -27,13 +30,16 @@ def initialize_positions(num_robots, start_position, buffer_radius):
     ])
     return positions
 
-positions = initialize_positions(num_robots, start_position, buffer_radius)
+positions = initialize_positions(num_robots, start_checkpoint, buffer_radius)
 headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
 
-# Calculate the moving center based on the frame number
-def get_moving_center(frame, num_steps, start_position, end_position):
-    t = frame / num_steps
-    return (1 - t) * start_position + t * end_position
+# Calculate the moving center based on the frame number and current checkpoint
+def get_moving_center(frame, num_steps, checkpoints):
+    total_segments = len(checkpoints) - 1
+    segment_length = num_steps // total_segments
+    current_segment = min(frame // segment_length, total_segments - 1)
+    t = (frame % segment_length) / segment_length
+    return (1 - t) * checkpoints[current_segment] + t * checkpoints[current_segment + 1]
 
 # Calculate positions on the moving circle for each robot
 def get_circle_positions(moving_center, radius, num_robots):
@@ -87,17 +93,20 @@ def update_positions_and_headings(positions, headings, forces):
 # Set up the plot
 fig, ax = plt.subplots()
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
-scat_start = ax.scatter(start_position[0], start_position[1], c='green', marker='o', s=100, label='Start Position')
-scat_end = ax.scatter(end_position[0], end_position[1], c='red', marker='x', s=100, label='End Position')
+scat_start = ax.scatter(start_checkpoint[0], start_checkpoint[1], c='green', marker='o', s=100, label='Start')
+scat_end = ax.scatter(end_checkpoint[0], end_checkpoint[1], c='red', marker='x', s=100, label='End')
+intermediate_checkpoints = checkpoints[1:-1]
+scat_intermediate = ax.scatter(*zip(*intermediate_checkpoints), c='orange', marker='s', s=60, label='Intermediate Checkpoints')
+
 ax.set_xlim(0, width)
 ax.set_ylim(0, width)
-ax.set_title("Optimal Collective Motion (OCM) - Movement to End Position")
+ax.set_title("Swarm Navigation through Multiple Checkpoints")
 ax.legend()
 
 # Animation update function
 def animate(frame):
     global positions, headings
-    moving_center = get_moving_center(frame, num_steps, start_position, end_position)
+    moving_center = get_moving_center(frame, num_steps, checkpoints)
     radius = buffer_radius * 2.0 / np.sin(np.pi / num_robots)
     circle_positions = get_circle_positions(moving_center, radius, num_robots)
     
@@ -106,7 +115,7 @@ def animate(frame):
     
     # Update scatter plot data
     scat.set_offsets(positions)
-    return scat, scat_start, scat_end
+    return scat, scat_start, scat_end, scat_intermediate
 
 # Run the animation
 ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=False)
