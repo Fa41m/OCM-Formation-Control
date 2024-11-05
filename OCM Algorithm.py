@@ -48,6 +48,10 @@ def initialize_positions(num_robots, start_position, buffer_radius):
 positions = initialize_positions(num_robots, start_checkpoint, buffer_radius)
 headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
 
+# Tracking variables for plotting
+average_forces = []
+average_alignments = []
+
 # Calculate the moving center based on the frame number and optimized route
 def get_moving_center(frame, num_steps, route):
     total_segments = len(route) - 1
@@ -67,6 +71,7 @@ def get_circle_positions(moving_center, radius, num_robots):
 # Function to calculate repulsion, alignment, and cohesion forces
 def compute_forces(positions, headings, circle_positions):
     forces = np.zeros((num_robots, 2))
+    total_force = 0  # Track total force for averaging
     
     for i in range(num_robots):
         neighbors = [
@@ -89,8 +94,16 @@ def compute_forces(positions, headings, circle_positions):
             alpha * repulsion_force +
             C * cohesion_force
         )
+        total_force += np.linalg.norm(forces[i])  # Sum the magnitude of forces
 
-    return forces
+    average_force = total_force / num_robots
+    return forces, average_force
+
+# Calculate average alignment
+def compute_alignment(headings):
+    avg_heading = np.mean(headings)
+    alignment = np.mean([np.cos(heading - avg_heading) for heading in headings])
+    return alignment
 
 # Update positions and headings based on forces
 def update_positions_and_headings(positions, headings, forces):
@@ -98,7 +111,6 @@ def update_positions_and_headings(positions, headings, forces):
     new_headings = np.copy(headings)
     
     for i in range(num_robots):
-        # Ensure step_direction is a numpy array
         step_direction = np.array(forces[i]) / np.linalg.norm(forces[i]) if np.linalg.norm(forces[i]) != 0 else np.array([1, 0])
         new_positions[i] += constant_speed * step_direction
         new_headings[i] = np.arctan2(step_direction[1], step_direction[0])
@@ -124,7 +136,14 @@ def animate(frame):
     radius = buffer_radius * 2.0 / np.sin(np.pi / num_robots)
     circle_positions = get_circle_positions(moving_center, radius, num_robots)
     
-    forces = compute_forces(positions, headings, circle_positions)
+    forces, avg_force = compute_forces(positions, headings, circle_positions)
+    alignment = compute_alignment(headings)
+    
+    # Store average force and alignment for plotting
+    average_forces.append(avg_force)
+    average_alignments.append(alignment)
+    
+    # Update positions and headings
     positions, headings = update_positions_and_headings(positions, headings, forces)
     
     # Update scatter plot data
@@ -133,4 +152,20 @@ def animate(frame):
 
 # Run the animation
 ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=False)
+plt.show()
+
+# Plot the Average Force over Time
+plt.figure()
+plt.plot(average_forces)
+plt.xlabel("Frame")
+plt.ylabel("Average Force")
+plt.title("Average Force between Robots over Time")
+plt.show()
+
+# Plot the Alignment over Time
+plt.figure()
+plt.plot(average_alignments)
+plt.xlabel("Frame")
+plt.ylabel("Alignment")
+plt.title("Average Alignment of Robots over Time")
 plt.show()
