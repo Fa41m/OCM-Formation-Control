@@ -10,11 +10,12 @@ num_steps = 300     # Number of time steps
 alpha = 0.1         # Weight for repulsion force
 K = 0.2             # Alignment strength
 C = 0.05            # Cohesion strength
-width = 20          # Width of the 2D space
+width = 20          # Width of the 2D space (world boundary)
 buffer_radius = 0.5 # Minimum distance between robots
 sensing_radius = 5.0 # Sensing radius for neighbors
 constant_speed = 0.2 # Constant speed for all robots
 num_checkpoints = 5 # Number of checkpoints (must be at least 2)
+boundary_tolerance = 0.5 # Tolerance for boundary constraint
 
 # Generate random checkpoints with distinct start and end positions
 np.random.seed(21)  # For reproducibility
@@ -59,6 +60,17 @@ def get_moving_center(frame, num_steps, route):
     current_segment = min(frame // segment_length, total_segments - 1)
     t = (frame % segment_length) / segment_length
     return (1 - t) * route[current_segment] + t * route[current_segment + 1]
+
+# Boundary condition enforcement
+def enforce_boundary_conditions(positions, width, boundary_tolerance):
+    corrected_positions = np.copy(positions)
+    for i in range(len(positions)):
+        for dim in range(2):  # Apply boundary conditions in x and y directions
+            if corrected_positions[i][dim] < boundary_tolerance:
+                corrected_positions[i][dim] = boundary_tolerance
+            elif corrected_positions[i][dim] > width - boundary_tolerance:
+                corrected_positions[i][dim] = width - boundary_tolerance
+    return corrected_positions
 
 # Calculate positions on the moving circle for each robot
 def get_circle_positions(moving_center, radius, num_robots):
@@ -115,6 +127,8 @@ def update_positions_and_headings(positions, headings, forces):
         new_positions[i] += constant_speed * step_direction
         new_headings[i] = np.arctan2(step_direction[1], step_direction[0])
     
+    # Enforce boundary conditions
+    new_positions = enforce_boundary_conditions(new_positions, width, boundary_tolerance)
     return new_positions, new_headings
 
 # Set up the plot
@@ -160,7 +174,7 @@ plt.plot(average_forces)
 plt.xlabel("Frame")
 plt.ylabel("Average Force")
 plt.title("Average Force between Robots over Time")
-plt.show()
+plt.show()  
 
 # Plot the Alignment over Time
 plt.figure()
