@@ -11,7 +11,7 @@ alpha = 0.1         # Weight for repulsion force
 K = 0.2             # Alignment strength
 C = 0.05            # Cohesion strength
 width = 35          # Width of the 2D space (world boundary)
-buffer_radius = 0.5 # Minimum distance between robots
+buffer_radius = 0.3 # Minimum distance between robots
 sensing_radius = 5.0 # Sensing radius for neighbors
 constant_speed = 0.2 # Constant speed for all robots
 num_checkpoints = 8 # Number of checkpoints (must be at least 2)
@@ -65,7 +65,9 @@ def get_moving_center(frame, num_steps, route):
     segment_length = num_steps // total_segments
     current_segment = min(frame // segment_length, total_segments - 1)
     t = (frame % segment_length) / segment_length
-    return (1 - t) * route[current_segment] + t * route[current_segment + 1]
+    start = np.array(route[current_segment])
+    end = np.array(route[current_segment + 1])
+    return (1 - t) * start + t * end
 
 # Boundary condition enforcement
 def enforce_boundary_conditions(positions, width, boundary_tolerance):
@@ -145,6 +147,7 @@ def update_positions_and_headings(positions, headings, forces):
     # Enforce boundary conditions
     new_positions = enforce_boundary_conditions(new_positions, width, boundary_tolerance)
     return new_positions, new_headings
+
 
 # Set up the plot
 fig, ax = plt.subplots()
