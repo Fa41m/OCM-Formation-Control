@@ -6,22 +6,25 @@ from PSO import pso
 
 # Parameters
 num_robots = 7      # Number of robots
-num_steps = 300     # Number of time steps
+num_steps = 800     # Number of time steps
 alpha = 0.1         # Weight for repulsion force
 K = 0.2             # Alignment strength
 C = 0.05            # Cohesion strength
-width = 20          # Width of the 2D space (world boundary)
+width = 35          # Width of the 2D space (world boundary)
 buffer_radius = 0.5 # Minimum distance between robots
 sensing_radius = 5.0 # Sensing radius for neighbors
 constant_speed = 0.2 # Constant speed for all robots
-num_checkpoints = 5 # Number of checkpoints (must be at least 2)
+num_checkpoints = 8 # Number of checkpoints (must be at least 2)
 boundary_tolerance = 0.5 # Tolerance for boundary constraint
+num_obstacles = 5   # Number of obstacles to spawn
+obstacle_radius = 1.0 # Radius of obstacles
 
 # Generate random checkpoints with distinct start and end positions
 np.random.seed(21)  # For reproducibility
 checkpoints = [np.random.rand(2) * width for _ in range(num_checkpoints)]
 
 # Parameters for PSO
+# TODO Hyperparameters for PSO
 num_particles = 30  # Number of particles in the swarm
 num_iterations = 100  # Number of PSO iterations
 inertia = 0.5
@@ -48,6 +51,9 @@ def initialize_positions(num_robots, start_position, buffer_radius):
 
 positions = initialize_positions(num_robots, start_checkpoint, buffer_radius)
 headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
+
+# Generate random obstacles
+obstacles = [np.random.rand(2) * (width - 2 * obstacle_radius) + obstacle_radius for _ in range(num_obstacles)]
 
 # Tracking variables for plotting
 average_forces = []
@@ -80,7 +86,7 @@ def get_circle_positions(moving_center, radius, num_robots):
         for angle in angles
     ])
 
-# Function to calculate repulsion, alignment, and cohesion forces
+# Function to calculate repulsion, alignment, cohesion, and obstacle avoidance forces
 def compute_forces(positions, headings, circle_positions):
     forces = np.zeros((num_robots, 2))
     total_force = 0  # Track total force for averaging
@@ -101,10 +107,19 @@ def compute_forces(positions, headings, circle_positions):
         # Cohesion force towards the designated position on the moving circle
         cohesion_force = circle_positions[i] - positions[i]
 
+        # Obstacle avoidance force
+        obstacle_avoidance_force = np.zeros(2)
+        for obstacle in obstacles:
+            distance_to_obstacle = np.linalg.norm(positions[i] - obstacle)
+            if distance_to_obstacle < sensing_radius + obstacle_radius:
+                # Apply repulsion from the obstacle based on distance
+                obstacle_avoidance_force += (positions[i] - obstacle) / (distance_to_obstacle ** 2)
+
         # Total force calculation using control parameters
         forces[i] = (
             alpha * repulsion_force +
-            C * cohesion_force
+            C * cohesion_force +
+            alpha * obstacle_avoidance_force  # Adjust the weight for obstacle avoidance
         )
         total_force += np.linalg.norm(forces[i])  # Sum the magnitude of forces
 
@@ -137,10 +152,14 @@ scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
 scat_start = ax.scatter(start_checkpoint[0], start_checkpoint[1], c='green', marker='o', s=100, label='Start')
 scat_end = ax.scatter(end_checkpoint[0], end_checkpoint[1], c='red', marker='x', s=100, label='End')
 scat_intermediate = ax.scatter(*zip(*intermediate_checkpoints), c='orange', marker='s', s=60, label='Intermediate Checkpoints')
+obstacle_patches = [plt.Circle((obs[0], obs[1]), obstacle_radius, color='gray', label='Obstacles') for obs in obstacles]
+
+for patch in obstacle_patches:
+    ax.add_patch(patch)
 
 ax.set_xlim(0, width)
 ax.set_ylim(0, width)
-ax.set_title("Swarm Navigation through Optimized Route")
+ax.set_title("Swarm Navigation through Optimized Route with Obstacles")
 ax.legend()
 
 # Animation update function
