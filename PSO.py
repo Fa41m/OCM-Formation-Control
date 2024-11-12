@@ -1,8 +1,7 @@
 import numpy as np
 import random
 
-def pso(checkpoints, num_particles, num_iterations, inertia, cognitive_coeff, social_coeff):
-
+def pso(start_checkpoint, rest_checkpoints, width, num_particles, num_iterations, inertia, cognitive_coeff, social_coeff):
     def distance(p1, p2):
         """Calculate Euclidean distance between two points."""
         return np.linalg.norm(np.array(p1) - np.array(p2))
@@ -16,9 +15,11 @@ def pso(checkpoints, num_particles, num_iterations, inertia, cognitive_coeff, so
         return total_distance
 
     class Particle:
-        def __init__(self, checkpoints):
-            self.checkpoints = [tuple(cp) for cp in checkpoints]  # Convert checkpoints to tuples
-            self.route = random.sample(self.checkpoints, len(self.checkpoints))
+        def __init__(self, start_checkpoint, rest_checkpoints):
+            self.start_checkpoint = tuple(start_checkpoint)
+            self.rest_checkpoints = [tuple(cp) for cp in rest_checkpoints]
+            # Initialize route starting from start_checkpoint
+            self.route = [self.start_checkpoint] + random.sample(self.rest_checkpoints, len(self.rest_checkpoints))
             self.best_route = self.route[:]
             self.best_distance = route_distance(self.route)
 
@@ -31,41 +32,40 @@ def pso(checkpoints, num_particles, num_iterations, inertia, cognitive_coeff, so
         def update_velocity(self, global_best_route):
             """PSO velocity update based on best routes (cognitive + social)"""
             new_route = self.route[:]
-            for i in range(len(self.route)):
-                if random.random() < cognitive_coeff:
-                    # Swap current route element with personal best
+            # Indices of rest_checkpoints in route (excluding start_checkpoint)
+            route_indices = list(range(1, len(new_route)))
+
+            for i in route_indices:
+                r1, r2 = random.random(), random.random()
+                # Cognitive component
+                if r1 < cognitive_coeff:
                     idx = self.best_route.index(self.route[i])
-                    new_route[i], new_route[idx] = new_route[idx], new_route[i]
-                elif random.random() < social_coeff:
-                    # Swap current route element with global best
+                    if idx != i:
+                        new_route[i], new_route[idx] = new_route[idx], new_route[i]
+                # Social component
+                if r2 < social_coeff:
                     idx = global_best_route.index(self.route[i])
-                    new_route[i], new_route[idx] = new_route[idx], new_route[i]
+                    if idx != i:
+                        new_route[i], new_route[idx] = new_route[idx], new_route[i]
             self.route = new_route
 
     # Initialize particles and global best
-    checkpoints = [tuple(cp) for cp in checkpoints]  # Convert checkpoints to tuples
-    particles = [Particle(checkpoints) for _ in range(num_particles)]
-    global_best_route = min(particles, key=lambda p: p.best_distance).best_route
-    global_best_distance = route_distance(global_best_route)
+    particles = [Particle(start_checkpoint, rest_checkpoints) for _ in range(num_particles)]
+    global_best_particle = min(particles, key=lambda p: p.best_distance)
+    global_best_route = global_best_particle.best_route[:]
+    global_best_distance = global_best_particle.best_distance
 
     # PSO main loop
     for _ in range(num_iterations):
         for particle in particles:
-            particle.update_personal_best()
             particle.update_velocity(global_best_route)
-        
+            particle.update_personal_best()
+
         # Update global best if needed
         candidate_best = min(particles, key=lambda p: p.best_distance)
         if candidate_best.best_distance < global_best_distance:
-            global_best_route = candidate_best.best_route
+            global_best_route = candidate_best.best_route[:]
             global_best_distance = candidate_best.best_distance
 
-    # The optimal checkpoint sequence determined by PSO
-    print("Optimal route order by PSO:", global_best_route)
-    print("Total distance:", global_best_distance)
-    
-    return global_best_route
-
-# Test Cases
-# checkpoints = [(0, 0), (2, 3), (5, 5), (8, 8), (6, 1)]
-# pso(checkpoints, num_particles=30, num_iterations=100, inertia=0.5, cognitive_coeff=1.5, social_coeff=1.5)
+    # Return both the optimal route and total distance
+    return global_best_route, global_best_distance
