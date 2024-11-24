@@ -5,16 +5,20 @@ import matplotlib.animation as animation
 # Parameters
 num_robots = 5       # Number of robots
 num_steps = 800      # Number of time steps
-alpha = 0.2          # Weight for repulsion force
+alpha = 0.1        # Weight for repulsion force
 K = 0.2              # Alignment strength (initial)
 C = 0.1              # Cohesion strength (initial)
 width = 35           # Width of the 2D space (world boundary)
 buffer_radius = 0.5  # Minimum distance between robots
 sensing_radius = 7.5 # Sensing radius for neighbors
 constant_speed = 0.1 # Base speed for all robots
-max_speed = 0.2      # Maximum speed for robots
+max_speed = 0.3      # Maximum speed for robots
 num_checkpoints = 10 # Number of checkpoints around the circle
 boundary_tolerance = 0.5 # Tolerance for boundary constraint
+
+# Lists to log K and C values
+K_values = []
+C_values = []
 
 # Define the center and radius of the circular path
 circle_center = np.array([width / 2, width / 2])  # Center of the world
@@ -169,12 +173,16 @@ ax.legend()
 
 # Animation update function
 def animate(frame):
-    global positions, headings
+    global positions, headings, K_values, C_values
     moving_center = get_moving_center(frame, num_steps, checkpoints)
     target_positions = get_target_positions(moving_center, num_robots, buffer_radius)
     
     # Adjust K and C dynamically
     adjust_parameters(positions, headings, target_positions)
+    
+    # Log K and C
+    K_values.append(K)
+    C_values.append(C)
     
     # Compute forces and update positions
     forces, avg_force = compute_forces(positions, headings, target_positions)
@@ -188,5 +196,16 @@ def animate(frame):
     return scat,
 
 # Run the animation
-ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
+ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=False)
+plt.show()
+
+# Plot K and C over time
+plt.figure(figsize=(10, 5))
+plt.plot(K_values, label="K (Alignment Strength)")
+plt.plot(C_values, label="C (Cohesion Strength)")
+plt.xlabel("Frame")
+plt.ylabel("Value")
+plt.title("Dynamic Adjustment of K and C Over Time")
+plt.legend()
+plt.grid(True)
 plt.show()
