@@ -5,7 +5,8 @@ import matplotlib.animation as animation
 # Parameters
 num_robots = 5       # Number of robots
 num_steps = 800      # Number of time steps
-alpha = 0.1        # Weight for repulsion force
+alpha = 0.1          # Weight for repulsion force
+beta = 0.1           # Weight for attraction force
 K = 0.2              # Alignment strength (initial)
 C = 0.1              # Cohesion strength (initial)
 width = 35           # Width of the 2D space (world boundary)
@@ -64,6 +65,17 @@ def get_target_positions(moving_center, num_robots, formation_radius):
         for angle in angles
     ])
 
+# Adjust Beta dynamically based on swarm behavior or distance to checkpoint
+def adjust_beta(positions, current_checkpoint):
+    global beta
+    distances_to_checkpoint = np.linalg.norm(positions - current_checkpoint, axis=1)
+    avg_distance = np.mean(distances_to_checkpoint)
+    
+    if avg_distance > 5.0:  # Example condition: Swarm is far from the checkpoint
+        beta = min(0.5, beta + 0.01)  # Gradually increase beta
+    else:
+        beta = max(0.05, beta - 0.01)  # Gradually decrease beta
+
 # Dynamically adjust K and C based on robot states
 def adjust_parameters(positions, headings, target_positions):
     global K, C
@@ -78,15 +90,21 @@ def adjust_parameters(positions, headings, target_positions):
     
     # Adjust C (cohesion strength)
     if avg_distance_to_targets > 1.0:  # If robots are far from targets
-        C = min(0.5, C + 0.01)  # Gradually increase cohesion strength
+        C = min(0.7, C + 0.01)  # Gradually increase cohesion strength
     else:
         C = max(0.05, C - 0.01)  # Gradually decrease cohesion strength
     
     # Adjust K (alignment strength)
     if alignment_error > 0.2:  # If alignment is poor
-        K = min(0.5, K + 0.01)  # Gradually increase alignment strength
+        K = min(0.7, K + 0.01)  # Gradually increase alignment strength
     else:
         K = max(0.05, K - 0.01)  # Gradually decrease alignment strength
+
+# Compute alignment metric
+def compute_alignment(headings):
+    avg_heading = np.mean([np.exp(1j * heading) for heading in headings])
+    alignment = np.abs(avg_heading)  # The magnitude of the mean heading as alignment metric
+    return alignment
 
 # Enforce boundary conditions
 def enforce_boundary_conditions(positions, width, boundary_tolerance):
@@ -99,8 +117,8 @@ def enforce_boundary_conditions(positions, width, boundary_tolerance):
                 corrected_positions[i][dim] = width - boundary_tolerance
     return corrected_positions
 
-# Compute forces based on OCM principles
-def compute_forces(positions, headings, target_positions):
+# Compute forces based on OCM principles with Beta
+def compute_forces_with_beta(positions, headings, target_positions, next_checkpoint):
     forces = np.zeros((num_robots, 2))
     total_force = 0  # Track total force for averaging
     
@@ -117,8 +135,11 @@ def compute_forces(positions, headings, target_positions):
             if distance < buffer_radius:
                 repulsion_force += (positions[i] - positions[j]) / (distance ** 2)
 
-        # Cohesion force towards the target position on the circle
+        # Cohesion force towards the target position on the formation
         cohesion_force = target_positions[i] - positions[i]
+
+        # Attraction force towards the next checkpoint
+        attraction_force = next_checkpoint - positions[i]
 
         # Alignment force
         avg_heading = np.mean([headings[j] for j in neighbors]) if neighbors else headings[i]
@@ -128,18 +149,13 @@ def compute_forces(positions, headings, target_positions):
         forces[i] = (
             alpha * repulsion_force +
             C * cohesion_force +
-            K * alignment_force
+            K * alignment_force +
+            beta * attraction_force  # Add beta for attraction force
         )
         total_force += np.linalg.norm(forces[i])  # Sum the magnitude of forces
 
     average_force = total_force / num_robots
     return forces, average_force
-
-# Calculate average alignment
-def compute_alignment(headings):
-    avg_heading = np.mean([np.exp(1j * heading) for heading in headings])
-    alignment = np.abs(avg_heading)  # The magnitude of the mean heading as alignment metric
-    return alignment
 
 # Update positions and headings based on forces and dynamic velocity
 def update_positions_and_headings(positions, headings, forces, target_positions):
@@ -168,24 +184,41 @@ scat_checkpoints = ax.scatter(checkpoints[:, 0], checkpoints[:, 1], c='red', mar
 ax.set_xlim(0, width)
 ax.set_ylim(0, width)
 ax.set_aspect('equal')  # Set aspect ratio to 'equal' for accurate representation
-ax.set_title("Swarm Following Circular Checkpoints with Dynamic K, C, and Velocity")
+ax.set_title("Swarm Following Circular Checkpoints with Dynamic K, C, Beta, and Velocity")
 ax.legend()
 
 # Animation update function
+# Animation update function
 def animate(frame):
     global positions, headings, K_values, C_values
-    moving_center = get_moving_center(frame, num_steps, checkpoints)
+    # Calculate the total number of frames per checkpoint cycle
+    frames_per_checkpoint = num_steps // num_checkpoints
+
+    # Wrap frame to loop through checkpoints
+    current_segment = (frame // frames_per_checkpoint) % num_checkpoints
+    next_segment = (current_segment + 1) % num_checkpoints
+    
+    # Calculate interpolation factor for smooth transition between checkpoints
+    t = (frame % frames_per_checkpoint) / frames_per_checkpoint
+    current_checkpoint = checkpoints[current_segment]
+    next_checkpoint = checkpoints[next_segment]
+    moving_center = (1 - t) * current_checkpoint + t * next_checkpoint
+    
+    # Target positions around the moving center
     target_positions = get_target_positions(moving_center, num_robots, buffer_radius)
+    
+    # Adjust Beta dynamically based on swarm behavior
+    adjust_beta(positions, current_checkpoint)
     
     # Adjust K and C dynamically
     adjust_parameters(positions, headings, target_positions)
     
-    # Log K and C
+    # Log K and C values
     K_values.append(K)
     C_values.append(C)
     
     # Compute forces and update positions
-    forces, avg_force = compute_forces(positions, headings, target_positions)
+    forces, avg_force = compute_forces_with_beta(positions, headings, target_positions, next_checkpoint)
     alignment = compute_alignment(headings)
     
     # Update positions and headings
@@ -195,8 +228,8 @@ def animate(frame):
     scat.set_offsets(positions)
     return scat,
 
-# Run the animation
-ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=False)
+# Run the animation indefinitely
+ani = animation.FuncAnimation(fig, animate, interval=100, repeat=True)
 plt.show()
 
 # Plot K and C over time
@@ -205,7 +238,7 @@ plt.plot(K_values, label="K (Alignment Strength)")
 plt.plot(C_values, label="C (Cohesion Strength)")
 plt.xlabel("Frame")
 plt.ylabel("Value")
-plt.title("Dynamic Adjustment of K and C Over Time")
+plt.title("Dynamic Adjustment of K, C, and Beta Over Time")
 plt.legend()
 plt.grid(True)
 plt.show()
