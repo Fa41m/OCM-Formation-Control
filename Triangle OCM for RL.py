@@ -3,18 +3,18 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Parameters
-num_robots = 5       # Number of robots
-num_steps = 400      # Number of time steps
-alpha = 0.1          # Weight for repulsion force
-beta = 0.1           # Weight for attraction force
-K = 0.2              # Alignment strength (initial)
-C = 0.1              # Cohesion strength (initial)
-width = 45           # Width of the 2D space (world boundary)
-buffer_radius = 0.5  # Minimum distance between robots
+num_robots = 5      # Number of robots (adjustable)
+num_steps = 400     # Number of time steps for a full circle
+alpha = 0.1         # Weight for repulsion force
+beta = 0.1          # Weight for attraction force
+K = 0.2             # Alignment strength (initial)
+C = 0.1             # Cohesion strength (initial)
+width = 45          # Width of the 2D space (world boundary)
+buffer_radius = 0.5 # Minimum distance between robots
 sensing_radius = 4.5 # Sensing radius for neighbors
 constant_speed = 0.1 # Base speed for all robots
-max_speed = 0.3      # Maximum speed for robots
-num_checkpoints = 10 # Number of checkpoints around the circle
+max_speed = 0.3     # Maximum speed for robots
+num_checkpoints = 10 # Number of checkpoints around the circle (unused in adjusted code)
 boundary_tolerance = 0.5 # Tolerance for boundary constraint
 
 # Parameters for varied obstacles
@@ -31,16 +31,6 @@ C_values = []
 # Define the center and radius of the circular path
 circle_center = np.array([width / 2, width / 2])  # Center of the world
 circle_radius = width / 4  # Radius of the circle
-
-# Generate circular checkpoints
-def generate_circular_checkpoints(center, radius, num_checkpoints):
-    angles = np.linspace(0, 2 * np.pi, num_checkpoints, endpoint=False)
-    return np.array([
-        center + radius * np.array([np.cos(angle), np.sin(angle)])
-        for angle in angles
-    ])
-
-checkpoints = generate_circular_checkpoints(circle_center, circle_radius, num_checkpoints)
 
 # Generate obstacles with three levels: offset, on the circle, and paired with a passage
 def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width):
@@ -66,7 +56,6 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
         elif i % 3 == 1:  # For 1/3 of the obstacles
             position = center + radius * np.array([np.cos(angle), np.sin(angle)])
             size = np.random.uniform(min_size, max_size)
-            # shape = np.random.choice(["circle", "rectangle"])
             shape = np.random.choice(["circle"])
             if shape == "circle":
                 obstacles.append({
@@ -74,16 +63,6 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
                     "level": 2,
                     "position": position,
                     "radius": size
-                })
-            elif shape == "rectangle":
-                width = size
-                height = np.random.uniform(min_size, max_size)
-                obstacles.append({
-                    "type": "rectangle",
-                    "level": 2,
-                    "position": position,
-                    "width": width,
-                    "height": height
                 })
 
         # Level 3: Paired obstacles with a passage
@@ -121,43 +100,119 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
 # Generate the obstacles with three levels
 obstacles = generate_varied_obstacles_with_levels(circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width)
 
-# Initialize positions in a circular shape around the start checkpoint
-def initialize_positions(num_robots, start_position, buffer_radius):
-    angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
-    positions = np.array([
-        start_position + buffer_radius * np.array([np.cos(angle), np.sin(angle)])
-        for angle in angles
-    ])
-    return positions
+# Initialize positions in a triangle shape around the start point on the circle
+def initialize_positions(num_robots, start_position, formation_size):
+    # Compute heading angle normal to the circle at start_position
+    radius_vector = start_position - circle_center
+    heading_vector = radius_vector  # Normal vector
+    heading_angle = np.arctan2(heading_vector[1], heading_vector[0])
 
-positions = initialize_positions(num_robots, checkpoints[0], buffer_radius)
+    # Determine the number of rows needed for the triangle formation
+    row = 1
+    total_bots = 0
+    rows = []
+    while total_bots < num_robots:
+        bots_in_row = row
+        if total_bots + bots_in_row > num_robots:
+            bots_in_row = num_robots - total_bots  # Adjust for incomplete last row
+        rows.append(bots_in_row)
+        total_bots += bots_in_row
+        row += 1
+
+    # Generate positions relative to the formation center
+    positions_relative = []
+    h_spacing = formation_size * 1.5  # Vertical spacing between rows
+    v_spacing = formation_size        # Horizontal spacing between robots in a row
+    y_offset = 0
+
+    for i, bots_in_row in enumerate(rows):
+        x_offset = -v_spacing * (bots_in_row - 1) / 2  # Center the row
+        for j in range(bots_in_row):
+            positions_relative.append([x_offset + j * v_spacing, y_offset])
+        y_offset -= h_spacing  # Move to the next row
+
+    positions_relative = np.array(positions_relative)
+
+    # Rotate positions by heading_angle
+    rotation_matrix = np.array([
+        [np.cos(heading_angle), -np.sin(heading_angle)],
+        [np.sin(heading_angle),  np.cos(heading_angle)]
+    ])
+
+    rotated_positions = positions_relative @ rotation_matrix.T
+
+    # Translate positions to start_position
+    initial_positions = rotated_positions + start_position
+
+    return initial_positions
+
+# Initial start position on the circle
+start_angle = 0
+start_position = circle_center + circle_radius * np.array([np.cos(start_angle), np.sin(start_angle)])
+positions = initialize_positions(num_robots, start_position, buffer_radius)
 headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
 
-# Calculate the moving center based on the current frame and circular checkpoints
-def get_moving_center(frame, num_steps, checkpoints):
-    total_segments = len(checkpoints)
-    segment_length = num_steps // total_segments
-    current_segment = min(frame // segment_length, total_segments - 1)
-    t = (frame % segment_length) / segment_length
-    start = np.array(checkpoints[current_segment])
-    end = np.array(checkpoints[(current_segment + 1) % total_segments])
-    return (1 - t) * start + t * end
+# Adjusted get_moving_center function
+def get_moving_center(frame, total_frames):
+    # Compute the angle corresponding to the current frame
+    theta = 2 * np.pi * frame / total_frames
+    # Compute the moving_center along the circle
+    moving_center = circle_center + circle_radius * np.array([np.cos(theta), np.sin(theta)])
+    return moving_center
 
-# Calculate positions on a circular formation around the moving center
-def get_target_positions(moving_center, num_robots, formation_radius):
-    angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
-    return np.array([
-        moving_center + formation_radius * np.array([np.cos(angle), np.sin(angle)])
-        for angle in angles
+# Adjusted get_target_positions function
+def get_target_positions(moving_center, num_robots, formation_size):
+    # Compute heading angle normal to the circle at moving_center
+    radius_vector = moving_center - circle_center
+    heading_vector = radius_vector  # Normal vector
+    heading_angle = np.arctan2(heading_vector[1], heading_vector[0])
+
+    # Determine the number of rows needed for the triangle formation
+    row = 1
+    total_bots = 0
+    rows = []
+    while total_bots < num_robots:
+        bots_in_row = row
+        if total_bots + bots_in_row > num_robots:
+            bots_in_row = num_robots - total_bots  # Adjust for incomplete last row
+        rows.append(bots_in_row)
+        total_bots += bots_in_row
+        row += 1
+
+    # Generate positions relative to the formation center
+    positions_relative = []
+    h_spacing = formation_size * 1.5  # Vertical spacing between rows
+    v_spacing = formation_size        # Horizontal spacing between robots in a row
+    y_offset = 0
+
+    for i, bots_in_row in enumerate(rows):
+        x_offset = -v_spacing * (bots_in_row - 1) / 2  # Center the row
+        for j in range(bots_in_row):
+            positions_relative.append([x_offset + j * v_spacing, y_offset])
+        y_offset -= h_spacing  # Move to the next row
+
+    positions_relative = np.array(positions_relative)
+
+    # Rotate positions by heading_angle
+    rotation_matrix = np.array([
+        [np.cos(heading_angle), -np.sin(heading_angle)],
+        [np.sin(heading_angle),  np.cos(heading_angle)]
     ])
 
-# Adjust Beta dynamically based on swarm behavior or distance to checkpoint
-def adjust_beta(positions, current_checkpoint):
+    rotated_positions = positions_relative @ rotation_matrix.T
+
+    # Translate positions to moving_center
+    target_positions = rotated_positions + moving_center
+
+    return target_positions
+
+# Adjust Beta dynamically based on swarm behavior or distance to moving center
+def adjust_beta(positions, moving_center):
     global beta
-    distances_to_checkpoint = np.linalg.norm(positions - current_checkpoint, axis=1)
-    avg_distance = np.mean(distances_to_checkpoint)
+    distances_to_center = np.linalg.norm(positions - moving_center, axis=1)
+    avg_distance = np.mean(distances_to_center)
     
-    if avg_distance > 5.0:  # Example condition: Swarm is far from the checkpoint
+    if avg_distance > 5.0:  # Example condition: Swarm is far from the moving center
         beta = min(0.5, beta + 0.01)  # Gradually increase beta
     else:
         beta = max(0.05, beta - 0.01)  # Gradually decrease beta
@@ -203,8 +258,8 @@ def enforce_boundary_conditions(positions, width, boundary_tolerance):
                 corrected_positions[i][dim] = width - boundary_tolerance
     return corrected_positions
 
-# Compute forces based on OCM principles with obstacle avoidance and decision-making
-def compute_forces(positions, headings, target_positions, next_checkpoint, obstacles):
+# Adjusted compute_forces function
+def compute_forces(positions, headings, target_positions, moving_center, obstacles):
     forces = np.zeros((num_robots, 2))
     total_force = 0  # Track total force for averaging
 
@@ -223,9 +278,6 @@ def compute_forces(positions, headings, target_positions, next_checkpoint, obsta
 
         # Cohesion force towards the target position on the formation
         cohesion_force = target_positions[i] - positions[i]
-
-        # Attraction force towards the next checkpoint
-        attraction_force = next_checkpoint - positions[i]
 
         # Alignment force
         avg_heading = np.mean([headings[j] for j in neighbors]) if neighbors else headings[i]
@@ -257,7 +309,10 @@ def compute_forces(positions, headings, target_positions, next_checkpoint, obsta
                 else:  # Left is clearer
                     obstacle_avoidance_force += tangent_left * 10.0  # Strong weight for avoidance
 
-        # Total force calculation: Prioritize obstacle avoidance
+        # Attraction force towards the moving center (for all robots)
+        attraction_force = beta * (moving_center - positions[i])
+
+        # Total force calculation
         if np.linalg.norm(obstacle_avoidance_force) > 0:  # If avoidance is active
             forces[i] = obstacle_avoidance_force  # Obstacle avoidance takes precedence
         else:
@@ -265,7 +320,7 @@ def compute_forces(positions, headings, target_positions, next_checkpoint, obsta
                 alpha * repulsion_force +
                 C * cohesion_force +
                 K * alignment_force +
-                beta * attraction_force
+                attraction_force
             )
 
         total_force += np.linalg.norm(forces[i])  # Sum the magnitude of forces
@@ -279,7 +334,10 @@ def update_positions_and_headings(positions, headings, forces, target_positions)
     new_headings = np.copy(headings)
     
     for i in range(num_robots):
-        step_direction = np.array(forces[i]) / np.linalg.norm(forces[i]) if np.linalg.norm(forces[i]) != 0 else np.array([1, 0])
+        if np.linalg.norm(forces[i]) != 0:
+            step_direction = forces[i] / np.linalg.norm(forces[i])
+        else:
+            step_direction = np.array([1, 0])
         
         # Calculate velocity based on distance to target position
         distance_to_target = np.linalg.norm(target_positions[i] - positions[i])
@@ -295,46 +353,39 @@ def update_positions_and_headings(positions, headings, forces, target_positions)
 # Set up the plot
 fig, ax = plt.subplots()
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Swarm')
-scat_checkpoints = ax.scatter(checkpoints[:, 0], checkpoints[:, 1], c='red', marker='x', label='Checkpoints')
+# Plot the initial moving center
+moving_center = get_moving_center(0, num_steps)
+scat_center = ax.scatter(moving_center[0], moving_center[1], c='orange', marker='o', label='Moving Center')
 # Plot obstacles
 for obs in obstacles:
     if obs["type"] == "circle":
         circle = plt.Circle(obs["position"], obs["radius"], color='green', alpha=0.5)
         ax.add_artist(circle)
-    elif obs["type"] == "rectangle":
-        rect = plt.Rectangle(
-            obs["position"] - np.array([obs["width"] / 2, obs["height"] / 2]),
-            obs["width"], obs["height"], color='orange', alpha=0.5
-        )
-        ax.add_artist(rect)
+
+# Draw the circle path
+theta = np.linspace(0, 2 * np.pi, 100)
+circle_path = circle_center[:, None] + circle_radius * np.array([np.cos(theta), np.sin(theta)])
+ax.plot(circle_path[0, :], circle_path[1, :], linestyle='--', color='gray', label='Circle Path')
 
 ax.set_xlim(0, width)
 ax.set_ylim(0, width)
 ax.set_aspect('equal')  # Set aspect ratio to 'equal' for accurate representation
-ax.set_title("Swarm Following Circular Checkpoints with Dynamic K, C, Beta, and Velocity")
+ax.set_title("Swarm Following Circular Trajectory with Dynamic Triangle Formation")
 ax.legend()
 
 # Animation update function
 def animate(frame):
-    global positions, headings, K_values, C_values
-    # Calculate the total number of frames per checkpoint cycle
-    frames_per_checkpoint = num_steps // num_checkpoints
+    global positions, headings, K_values, C_values, beta
+    total_frames = num_steps  # Total number of frames for a full circle
 
-    # Wrap frame to loop through checkpoints
-    current_segment = (frame // frames_per_checkpoint) % num_checkpoints
-    next_segment = (current_segment + 1) % num_checkpoints
-
-    # Calculate interpolation factor for smooth transition between checkpoints
-    t = (frame % frames_per_checkpoint) / frames_per_checkpoint
-    current_checkpoint = checkpoints[current_segment]
-    next_checkpoint = checkpoints[next_segment]
-    moving_center = (1 - t) * current_checkpoint + t * next_checkpoint
+    # Get the moving center along the circle
+    moving_center = get_moving_center(frame, total_frames)
 
     # Target positions around the moving center
     target_positions = get_target_positions(moving_center, num_robots, buffer_radius)
 
     # Adjust Beta dynamically based on swarm behavior
-    adjust_beta(positions, current_checkpoint)
+    adjust_beta(positions, moving_center)
 
     # Adjust K and C dynamically
     adjust_parameters(positions, headings, target_positions)
@@ -344,7 +395,7 @@ def animate(frame):
     C_values.append(C)
 
     # Compute forces and update positions (including obstacle avoidance)
-    forces, avg_force = compute_forces(positions, headings, target_positions, next_checkpoint, obstacles)
+    forces, avg_force = compute_forces(positions, headings, target_positions, moving_center, obstacles)
     alignment = compute_alignment(headings)
 
     # Update positions and headings
@@ -352,10 +403,12 @@ def animate(frame):
 
     # Update scatter plot data
     scat.set_offsets(positions)
-    return scat,
+    scat_center.set_offsets(moving_center)
+
+    return scat, scat_center
 
 # Run the animation indefinitely
-ani = animation.FuncAnimation(fig, animate, interval=100, repeat=True)
+ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
 plt.show()
 
 # Plot K and C over time
@@ -364,7 +417,7 @@ plt.plot(K_values, label="K (Alignment Strength)")
 plt.plot(C_values, label="C (Cohesion Strength)")
 plt.xlabel("Frame")
 plt.ylabel("Value")
-plt.title("Dynamic Adjustment of K, C, and Beta Over Time")
+plt.title("Dynamic Adjustment of K and C Over Time")
 plt.legend()
 plt.grid(True)
 plt.show()
