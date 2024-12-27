@@ -3,15 +3,15 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Parameters
-num_robots = 5      # Number of robots (adjustable)
+num_robots = 20      # Number of robots (adjustable)
 num_steps = 400     # Number of time steps for a full circle
 alpha = 0.1         # Weight for repulsion force
 beta = 0.1          # Weight for attraction force
 K = 0.2             # Alignment strength (initial)
 C = 0.1             # Cohesion strength (initial)
-width = 45          # Width of the 2D space (world boundary)
+width = 100          # Width of the 2D space (world boundary)
 buffer_radius = 0.5 # Minimum distance between robots
-sensing_radius = 4.5 # Sensing radius for neighbors
+sensing_radius = 0.5 # Sensing radius for neighbors
 constant_speed = 0.1 # Base speed for all robots
 max_speed = 0.3     # Maximum speed for robots
 num_checkpoints = 10 # Number of checkpoints around the circle (unused in adjusted code)
@@ -211,35 +211,40 @@ def adjust_beta(positions, moving_center):
     global beta
     distances_to_center = np.linalg.norm(positions - moving_center, axis=1)
     avg_distance = np.mean(distances_to_center)
-    
-    if avg_distance > 5.0:  # Example condition: Swarm is far from the moving center
-        beta = min(0.5, beta + 0.01)  # Gradually increase beta
-    else:
-        beta = max(0.05, beta - 0.01)  # Gradually decrease beta
+    desired_distance = 0.0  # Desired average distance to moving center
+    error = avg_distance - desired_distance
+
+    # Proportional gain (tunable parameter)
+    Kp_beta = 0.1
+    beta_change = Kp_beta * error
+    beta = np.clip(beta + beta_change, 0.05, 0.5)  # Ensure beta stays within bounds
 
 # Dynamically adjust K and C based on robot states
 def adjust_parameters(positions, headings, target_positions):
     global K, C
-    
+
     # Calculate average distance from target positions
     distances_to_targets = np.linalg.norm(positions - target_positions, axis=1)
     avg_distance_to_targets = np.mean(distances_to_targets)
-    
+    desired_distance = 0.0  # Ideally, robots are at their target positions
+    error_distance = avg_distance_to_targets - desired_distance
+
     # Calculate alignment error
     alignment = compute_alignment(headings)
-    alignment_error = 1 - alignment  # Higher error means less alignment
-    
+    desired_alignment = 1.0  # Perfect alignment
+    error_alignment = desired_alignment - alignment  # Higher error means less alignment
+
+    # Proportional gains (tunable parameters)
+    Kp_C = 0.1
+    Kp_K = 0.1
+
     # Adjust C (cohesion strength)
-    if avg_distance_to_targets > 1.0:  # If robots are far from targets
-        C = min(0.95, C + 0.01)  # Gradually increase cohesion strength
-    else:
-        C = max(0.05, C - 0.01)  # Gradually decrease cohesion strength
-    
+    C_change = Kp_C * error_distance
+    C = np.clip(C + C_change, 0.05, 0.95)
+
     # Adjust K (alignment strength)
-    if alignment_error > 0.2:  # If alignment is poor
-        K = min(0.95, K + 0.01)  # Gradually increase alignment strength
-    else:
-        K = max(0.05, K - 0.01)  # Gradually decrease alignment strength
+    K_change = Kp_K * error_alignment
+    K = np.clip(K + K_change, 0.05, 0.95)
 
 # Compute alignment metric
 def compute_alignment(headings):
@@ -272,9 +277,15 @@ def compute_forces(positions, headings, target_positions, moving_center, obstacl
         # Repulsion force from other robots
         repulsion_force = np.zeros(2)
         for j in neighbors:
-            distance = np.linalg.norm(positions[i] - positions[j])
+            displacement = positions[i] - positions[j]
+            distance = np.linalg.norm(displacement)
+            direction = displacement / (distance + 1e-6)
             if distance < buffer_radius:
-                repulsion_force += (positions[i] - positions[j]) / (distance ** 2 + 1e-6)
+                # Strong repulsion when too close
+                repulsion_force += direction * (1 / (distance + 1e-6) - 1 / buffer_radius) * (1 / (distance + 1e-6))
+            else:
+                # Weaker repulsion when within sensing radius
+                repulsion_force += direction * (1 / (distance ** 2 + 1e-6))
 
         # Cohesion force towards the target position on the formation
         cohesion_force = target_positions[i] - positions[i]
@@ -348,14 +359,28 @@ def update_positions_and_headings(positions, headings, forces, target_positions)
     
     # Enforce boundary conditions
     new_positions = enforce_boundary_conditions(new_positions, width, boundary_tolerance)
+    
+    # Ensure minimum separation between robots
+    for i in range(num_robots):
+        for j in range(i + 1, num_robots):
+            displacement = new_positions[i] - new_positions[j]
+            distance = np.linalg.norm(displacement)
+            if distance < buffer_radius:
+                # Adjust positions to maintain minimum separation
+                overlap = buffer_radius - distance
+                correction = (overlap / 2) * (displacement / (distance + 1e-6))
+                new_positions[i] += correction
+                new_positions[j] -= correction
+    
     return new_positions, new_headings
+
 
 # Set up the plot
 fig, ax = plt.subplots()
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Swarm')
 # Plot the initial moving center
-moving_center = get_moving_center(0, num_steps)
-scat_center = ax.scatter(moving_center[0], moving_center[1], c='orange', marker='o', label='Moving Center')
+# moving_center = get_moving_center(0, num_steps)
+# scat_center = ax.scatter(moving_center[0], moving_center[1], c='orange', marker='o', label='Moving Center')
 # Plot obstacles
 for obs in obstacles:
     if obs["type"] == "circle":
@@ -403,9 +428,10 @@ def animate(frame):
 
     # Update scatter plot data
     scat.set_offsets(positions)
-    scat_center.set_offsets(moving_center)
+    # scat_center.set_offsets(moving_center)
 
-    return scat, scat_center
+    # return scat, scat_center
+    return scat
 
 # Run the animation indefinitely
 ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
