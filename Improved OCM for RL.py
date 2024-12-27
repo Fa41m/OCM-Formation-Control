@@ -16,8 +16,8 @@ world_boundary_tolerance = 0.5
 
 # Obstacle Parameters
 num_obstacles = 3
-min_obstacle_size = 2.0
-max_obstacle_size = 4.0
+min_obstacle_size = 1.0
+max_obstacle_size = 2.0
 offset_degrees = 50
 passage_width = 3.0
 
@@ -39,24 +39,37 @@ K_values = []
 C_values = []
 
 # Helper Functions
-def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width):
+def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width, level):
+    """
+    Generate obstacles based on the specified level.
+    Level 0: No obstacles.
+    Level 1: Offset obstacles.
+    Level 2: Obstacles on the circle.
+    Level 3: Paired obstacles with a passage.
+    Level 4: All combined.
+    """
     offset_radians = np.deg2rad(offset_degrees)
     angles = np.linspace(0, 2 * np.pi, num_obstacles, endpoint=False) + offset_radians
     obstacles = []
+
     for i, angle in enumerate(angles):
-        if i % 3 == 0:
-            offset_distance = np.random.choice([-1, 1]) * 2
+        if level == 1 or (level == 4 and i % 3 == 0):  # Offset obstacles
+            offset_distance = np.random.choice([-1, 1]) * 4
             pos = center + (radius + offset_distance) * np.array([np.cos(angle), np.sin(angle)])
-            size = np.random.uniform(min_size, max_size)
+            # size = np.random.uniform(min_size, max_size)
+            size = np.random.uniform(1, 2.5)
             obstacles.append({"type": "circle", "position": pos, "radius": size})
-        elif i % 3 == 1:
+        elif level == 2 or (level == 4 and i % 3 == 1):  # Obstacles on the circle
             pos = center + radius * np.array([np.cos(angle), np.sin(angle)])
-            size = np.random.uniform(min_size, max_size)
+            # size = np.random.uniform(min_size, max_size)
+            size = np.random.uniform(1.5, 2.5)
             obstacles.append({"type": "circle", "position": pos, "radius": size})
-        elif i % 3 == 2:
+        elif level == 3 or (level == 4 and i % 3 == 2):  # Paired obstacles with a passage
             central_pos = center + radius * np.array([np.cos(angle), np.sin(angle)])
-            size1 = np.random.uniform(min_size, max_size)
-            size2 = np.random.uniform(min_size, max_size)
+            # size1 = np.random.uniform(min_size, max_size)
+            # size2 = np.random.uniform(min_size, max_size)
+            size1 = np.random.uniform(2, 4)
+            size2 = np.random.uniform(2, 4)
             adjusted_width = max(passage_width, size1 + size2 + passage_width)
             pos1 = central_pos - adjusted_width / 2 * np.array([np.cos(angle), np.sin(angle)])
             pos2 = central_pos + adjusted_width / 2 * np.array([np.cos(angle), np.sin(angle)])
@@ -64,7 +77,9 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
                 {"type": "circle", "position": pos1, "radius": size1},
                 {"type": "circle", "position": pos2, "radius": size2}
             ])
+
     return obstacles
+
 
 def initialize_positions(num_robots, start_position, formation_radius):
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
@@ -444,8 +459,11 @@ def main():
     positions = initialize_positions(num_robots, start_position, formation_radius)
     headings = np.random.uniform(0, 2 * np.pi, num_robots)
     velocities = np.zeros_like(positions)
-    obstacles = generate_varied_obstacles_with_levels(circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width)
-
+    obstacle_level = 3
+    obstacles = generate_varied_obstacles_with_levels(
+        circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size,
+        offset_degrees, passage_width, obstacle_level
+    )
     # Set up the plot
     fig, ax = plt.subplots()
     # plot obstacles
