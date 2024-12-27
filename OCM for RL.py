@@ -3,15 +3,15 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Parameters
-num_robots = 5       # Number of robots
+num_robots = 30       # Number of robots
 num_steps = 400      # Number of time steps
-alpha = 0.1          # Weight for repulsion force
-beta = 0.1           # Weight for attraction force
+alpha = 0.2          # Weight for repulsion force
+beta = 0.2           # Weight for attraction force
 K = 0.2              # Alignment strength (initial)
 C = 0.1              # Cohesion strength (initial)
 width = 45           # Width of the 2D space (world boundary)
-buffer_radius = 0.5  # Minimum distance between robots
-sensing_radius = 4.5 # Sensing radius for neighbors
+buffer_radius = 1  # Minimum distance between robots
+sensing_radius = 1 # Sensing radius for neighbors
 constant_speed = 0.1 # Base speed for all robots
 max_speed = 0.3      # Maximum speed for robots
 num_checkpoints = 10 # Number of checkpoints around the circle
@@ -24,6 +24,10 @@ max_obstacle_size = 2.0
 offset_degrees = 50
 passage_width = 2.0  # Width of the passage for Level 3 obstacles
 
+sensor_angle_degrees = 30.0  # Sensor angle offset from the robot's heading direction
+sensor_angle_radians = np.deg2rad(sensor_angle_degrees)
+detection_distance = 0.7  # Sensor detection distance
+
 # Lists to log K and C values
 K_values = []
 C_values = []
@@ -33,14 +37,22 @@ circle_center = np.array([width / 2, width / 2])  # Center of the world
 circle_radius = width / 4  # Radius of the circle
 
 # Generate circular checkpoints
-def generate_circular_checkpoints(center, radius, num_checkpoints):
-    angles = np.linspace(0, 2 * np.pi, num_checkpoints, endpoint=False)
-    return np.array([
-        center + radius * np.array([np.cos(angle), np.sin(angle)])
-        for angle in angles
-    ])
+# def generate_circular_checkpoints(center, radius, num_checkpoints):
+#     angles = np.linspace(0, 2 * np.pi, num_checkpoints, endpoint=False)
+#     return np.array([
+#         center + radius * np.array([np.cos(angle), np.sin(angle)])
+#         for angle in angles
+#     ])
+def get_moving_center(frame, total_frames):
+    """
+    Compute the moving center along the circular path based on the current frame.
+    """
+    theta = 2 * np.pi * frame / total_frames
+    return circle_center + circle_radius * np.array([np.cos(theta), np.sin(theta)])
 
-checkpoints = generate_circular_checkpoints(circle_center, circle_radius, num_checkpoints)
+
+# checkpoints = generate_circular_checkpoints(circle_center, circle_radius, num_checkpoints)
+
 
 # Generate obstacles with three levels: offset, on the circle, and paired with a passage
 def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width):
@@ -121,35 +133,45 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
 # Generate the obstacles with three levels
 obstacles = generate_varied_obstacles_with_levels(circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width)
 
-# Initialize positions in a circular shape around the start checkpoint
-def initialize_positions(num_robots, start_position, buffer_radius):
+# Adjusted Initialization for Circular Configuration
+def initialize_positions(num_robots, start_position, formation_radius):
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
     positions = np.array([
-        start_position + buffer_radius * np.array([np.cos(angle), np.sin(angle)])
+        start_position + formation_radius * np.array([np.cos(angle), np.sin(angle)])
         for angle in angles
     ])
     return positions
 
-positions = initialize_positions(num_robots, checkpoints[0], buffer_radius)
-headings = np.random.rand(num_robots) * 2 * np.pi  # Random initial headings
+# Calculate formation radius dynamically based on the number of robots and buffer radius
+formation_radius = max(buffer_radius * num_robots / (2 * np.pi), buffer_radius)
+# Define the starting position on the circular path
+start_angle = 0  # Starting angle in radians (can be adjusted)
+start_position = circle_center + circle_radius * np.array([np.cos(start_angle), np.sin(start_angle)])
+
+# Initialize positions around the starting point
+positions = initialize_positions(num_robots, start_position, formation_radius)
+headings = np.random.uniform(0, 2 * np.pi, num_robots)  # Random initial headings for all robots
 
 # Calculate the moving center based on the current frame and circular checkpoints
-def get_moving_center(frame, num_steps, checkpoints):
-    total_segments = len(checkpoints)
-    segment_length = num_steps // total_segments
-    current_segment = min(frame // segment_length, total_segments - 1)
-    t = (frame % segment_length) / segment_length
-    start = np.array(checkpoints[current_segment])
-    end = np.array(checkpoints[(current_segment + 1) % total_segments])
-    return (1 - t) * start + t * end
+def get_moving_center(frame, total_frames):
+    """
+    Compute the moving center along the circular path based on the current frame.
+    """
+    theta = 2 * np.pi * frame / total_frames
+    return circle_center + circle_radius * np.array([np.cos(theta), np.sin(theta)])
+
 
 # Calculate positions on a circular formation around the moving center
 def get_target_positions(moving_center, num_robots, formation_radius):
+    """
+    Generate target positions around the moving center.
+    """
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
     return np.array([
         moving_center + formation_radius * np.array([np.cos(angle), np.sin(angle)])
         for angle in angles
     ])
+
 
 # Adjust Beta dynamically based on swarm behavior or distance to checkpoint
 def adjust_beta(positions, current_checkpoint):
@@ -202,6 +224,7 @@ def enforce_boundary_conditions(positions, width, boundary_tolerance):
             elif corrected_positions[i][dim] > width - boundary_tolerance:
                 corrected_positions[i][dim] = width - boundary_tolerance
     return corrected_positions
+
 
 # Compute forces based on OCM principles with obstacle avoidance and decision-making
 def compute_forces(positions, headings, target_positions, next_checkpoint, obstacles):
@@ -274,28 +297,117 @@ def compute_forces(positions, headings, target_positions, next_checkpoint, obsta
     return forces, average_force
 
 # Update positions and headings based on forces and dynamic velocity
+# def update_positions_and_headings(positions, headings, forces, target_positions):
+#     new_positions = np.copy(positions)
+#     new_headings = np.copy(headings)
+    
+#     for i in range(num_robots):
+#         step_direction = np.array(forces[i]) / np.linalg.norm(forces[i]) if np.linalg.norm(forces[i]) != 0 else np.array([1, 0])
+        
+#         # Calculate velocity based on distance to target position
+#         distance_to_target = np.linalg.norm(target_positions[i] - positions[i])
+#         velocity = min(max_speed, constant_speed + 0.1 * distance_to_target)  # Dynamic velocity
+        
+#         new_positions[i] += velocity * step_direction
+#         new_headings[i] = np.arctan2(step_direction[1], step_direction[0])
+    
+#     # Enforce boundary conditions
+#     new_positions = enforce_boundary_conditions(new_positions, width, boundary_tolerance)
+#     return new_positions, new_headings
+
+def detect_object_in_sensor_direction(i, positions, sensor_angle, detection_distance, obstacles):
+    pos = positions[i]
+    sensor_dir = np.array([np.cos(sensor_angle), np.sin(sensor_angle)])
+    
+    # Check other robots
+    for j in range(num_robots):
+        if j == i:
+            continue
+        vec = positions[j] - pos
+        proj = np.dot(vec, sensor_dir)
+        if proj > 0 and np.linalg.norm(vec) <= detection_distance:
+            return True
+    
+    # Check obstacles (no additional buffer, just obstacle radius + detection_distance)
+    for obs in obstacles:
+        if obs["type"] == "circle":
+            vec = obs["position"] - pos
+            proj = np.dot(vec, sensor_dir)
+            dist = np.linalg.norm(vec)
+            if proj > 0 and dist <= (obs["radius"] + detection_distance):
+                return True
+        elif obs["type"] == "rectangle":
+            vec = obs["position"] - pos
+            proj = np.dot(vec, sensor_dir)
+            dist = np.linalg.norm(vec)
+            half_diag = 0.5 * np.sqrt(obs["width"]**2 + obs["height"]**2)
+            if proj > 0 and dist <= (half_diag + detection_distance):
+                return True
+
+    return False
+
+
 def update_positions_and_headings(positions, headings, forces, target_positions):
     new_positions = np.copy(positions)
     new_headings = np.copy(headings)
     
     for i in range(num_robots):
-        step_direction = np.array(forces[i]) / np.linalg.norm(forces[i]) if np.linalg.norm(forces[i]) != 0 else np.array([1, 0])
+        # Compute step direction from forces
+        if np.linalg.norm(forces[i]) != 0:
+            step_direction = forces[i] / np.linalg.norm(forces[i])
+        else:
+            step_direction = np.array([1, 0])
         
-        # Calculate velocity based on distance to target position
+        # Calculate velocity based on distance to target position (OCM-based movement)
         distance_to_target = np.linalg.norm(target_positions[i] - positions[i])
         velocity = min(max_speed, constant_speed + 0.1 * distance_to_target)  # Dynamic velocity
+
+        # Determine heading from OCM-based direction first
+        current_heading = np.arctan2(step_direction[1], step_direction[0])
         
-        new_positions[i] += velocity * step_direction
-        new_headings[i] = np.arctan2(step_direction[1], step_direction[0])
-    
+        # Now incorporate sensor-based obstacle avoidance
+        # Define sensor directions relative to current OCM-based heading
+        left_sensor_angle = current_heading + sensor_angle_radians
+        right_sensor_angle = current_heading - sensor_angle_radians
+        
+        # Check sensors
+        left_detected = detect_object_in_sensor_direction(i, positions, left_sensor_angle, detection_distance, obstacles)
+        right_detected = detect_object_in_sensor_direction(i, positions, right_sensor_angle, detection_distance, obstacles)
+        
+        # Decide turning based on sensor inputs
+        turn_rate = 0.01  # Radians per step for turning
+        if left_detected and not right_detected:
+            # Object detected on left, turn right
+            current_heading -= turn_rate
+        elif right_detected and not left_detected:
+            # Object detected on right, turn left
+            current_heading += turn_rate
+        elif left_detected and right_detected:
+            # Detected both sides, turn right by default
+            current_heading -= turn_rate
+        # If no detection, keep current_heading as is
+
+        # Update heading after sensor-based adjustment
+        new_headings[i] = current_heading
+
+        # Move forward in the final adjusted direction
+        dx = np.cos(new_headings[i]) * velocity
+        dy = np.sin(new_headings[i]) * velocity
+        new_positions[i] += np.array([dx, dy])
+
     # Enforce boundary conditions
     new_positions = enforce_boundary_conditions(new_positions, width, boundary_tolerance)
     return new_positions, new_headings
 
+
+
 # Set up the plot
 fig, ax = plt.subplots()
 scat = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Swarm')
-scat_checkpoints = ax.scatter(checkpoints[:, 0], checkpoints[:, 1], c='red', marker='x', label='Checkpoints')
+# scat_checkpoints = ax.scatter(checkpoints[:, 0], checkpoints[:, 1], c='red', marker='x', label='Checkpoints')
+theta = np.linspace(0, 2 * np.pi, 100)
+circle_path = circle_center[:, None] + circle_radius * np.array([np.cos(theta), np.sin(theta)])
+ax.plot(circle_path[0, :], circle_path[1, :], linestyle='--', color='gray', label='Circle Path')
 # Plot obstacles
 for obs in obstacles:
     if obs["type"] == "circle":
@@ -315,47 +427,66 @@ ax.set_title("Swarm Following Circular Checkpoints with Dynamic K, C, Beta, and 
 ax.legend()
 
 # Animation update function
+# def animate(frame):
+#     global positions, headings, K_values, C_values
+
+#     # Total number of frames for a full circle
+#     total_frames = num_steps
+
+#     # Get the moving center along the circle
+#     moving_center = get_moving_center(frame, total_frames)
+
+#     # Target positions around the moving center
+#     target_positions = get_target_positions(moving_center, num_robots, buffer_radius)
+
+#     # Adjust Beta dynamically based on swarm behavior
+#     adjust_beta(positions, moving_center)
+
+#     # Adjust K and C dynamically
+#     adjust_parameters(positions, headings, target_positions)
+
+#     # Log K and C values
+#     K_values.append(K)
+#     C_values.append(C)
+
+#     # Compute forces and update positions (including obstacle avoidance)
+#     forces, avg_force = compute_forces(positions, headings, target_positions, moving_center, obstacles)
+#     alignment = compute_alignment(headings)
+
+#     # Update positions and headings
+#     positions, headings = update_positions_and_headings(positions, headings, forces, target_positions)
+
+#     # Update scatter plot data
+#     scat.set_offsets(positions)
+#     return scat,
 def animate(frame):
     global positions, headings, K_values, C_values
-    # Calculate the total number of frames per checkpoint cycle
-    frames_per_checkpoint = num_steps // num_checkpoints
 
-    # Wrap frame to loop through checkpoints
-    current_segment = (frame // frames_per_checkpoint) % num_checkpoints
-    next_segment = (current_segment + 1) % num_checkpoints
+    total_frames = num_steps
+    moving_center = get_moving_center(frame, total_frames)
+    
+    # Use the original formation radius instead of buffer_radius here:
+    target_positions = get_target_positions(moving_center, num_robots, formation_radius)
 
-    # Calculate interpolation factor for smooth transition between checkpoints
-    t = (frame % frames_per_checkpoint) / frames_per_checkpoint
-    current_checkpoint = checkpoints[current_segment]
-    next_checkpoint = checkpoints[next_segment]
-    moving_center = (1 - t) * current_checkpoint + t * next_checkpoint
-
-    # Target positions around the moving center
-    target_positions = get_target_positions(moving_center, num_robots, buffer_radius)
-
-    # Adjust Beta dynamically based on swarm behavior
-    adjust_beta(positions, current_checkpoint)
-
-    # Adjust K and C dynamically
+    adjust_beta(positions, moving_center)
     adjust_parameters(positions, headings, target_positions)
 
-    # Log K and C values
     K_values.append(K)
     C_values.append(C)
 
-    # Compute forces and update positions (including obstacle avoidance)
-    forces, avg_force = compute_forces(positions, headings, target_positions, next_checkpoint, obstacles)
+    forces, avg_force = compute_forces(positions, headings, target_positions, moving_center, obstacles)
     alignment = compute_alignment(headings)
 
-    # Update positions and headings
+    # Update positions and headings with a smaller turn_rate for sensor avoidance
+    # Open the update_positions_and_headings function and reduce turn_rate to something smaller, like 0.01
     positions, headings = update_positions_and_headings(positions, headings, forces, target_positions)
 
-    # Update scatter plot data
     scat.set_offsets(positions)
     return scat,
 
 # Run the animation indefinitely
-ani = animation.FuncAnimation(fig, animate, interval=100, repeat=True)
+# ani = animation.FuncAnimation(fig, animate, interval=100, repeat=True)
+ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
 plt.show()
 
 # Plot K and C over time
