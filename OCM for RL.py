@@ -5,11 +5,17 @@ import matplotlib.animation as animation
 # Global Parameters
 num_robots = 20
 num_steps = 400
+# Attraction strength
 alpha = 0.4
+# Repulsion strength
 beta = 0.4
+# Alignment strength
 K = 0.2
+# Cohesion strength
 C = 0.1
+# Width of the 2D space (world boundary)
 width = 60
+# Speed of the robots
 constant_speed = 0.1
 max_speed = 0.3
 world_boundary_tolerance = 0.5

@@ -9,10 +9,20 @@ num_steps = 400
 alpha = 0.4
 # Repulsion strength
 beta = 0.4
-# Alignment strength
-K = 0.2
-# Cohesion strength
-C = 0.1
+
+K_base = 0.7  # Base alignment strength
+C_base = 0.6  # Base cohesion strength
+K_min, K_max = 0.005, 0.995  # Range for alignment strength
+C_min, C_max = 0.005, 0.995  # Range for cohesion strength
+
+# Arrays to store K and C values over time
+K_values_over_time = []
+C_values_over_time = []
+
+# Smoothing factor for gradual increase and decrease
+lambda_K = 0.7  # Controls the smoothness for alignment strength
+lambda_C = 0.5  # Controls the smoothness for cohesion strength
+
 # Width of the 2D space (world boundary)
 width = 60
 # Speed of the robots
@@ -43,6 +53,9 @@ circle_radius = width / 4
 # Global Variables for Logging
 K_values = []
 C_values = []
+
+# Global collision zone threshold
+collision_zone = 0.1  # Threshold for collision detection
 
 # Helper Functions
 def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width, level):
@@ -225,79 +238,77 @@ def detect_with_sensor(position, heading, sensor_angle, robots, sensor_detection
 
 #     return forces, desired_velocities
 
+# Gradual transition function with bounds and early stopping
+def smooth_transition_with_bounds(current_value, target_value, smoothing_factor, value_min, value_max):
+    new_value = current_value + smoothing_factor * (target_value - current_value)
+    new_value = np.clip(new_value, value_min, value_max)
+    if abs(new_value - target_value) < 0.02:
+        new_value = target_value
+    return new_value
+
+def adjust_alignment_cohesion_gradual(current_K, current_C, center_dist):
+    if center_dist < sensor_detection_distance:
+        target_K = max(K_min, K_base * (center_dist / sensor_detection_distance))
+        target_C = max(C_min, C_base * (center_dist / sensor_detection_distance))
+    else:
+        target_K = K_base
+        target_C = C_base
+
+    new_K = smooth_transition_with_bounds(current_K, target_K, lambda_K, K_min, K_max)
+    new_C = smooth_transition_with_bounds(current_C, target_C, lambda_C, C_min, C_max)
+    return new_K, new_C
+
 # TODO: Solution to the robots crashing into each other but sometimes it isn't fluid
-def compute_forces_with_sensors(positions, headings, velocities, target_positions, obstacles):
-    """
-    Compute forces using sensor-based detection, alignment, cohesion, and repulsion,
-    while ensuring a safety boundary between robots.
-    """
+def compute_forces_with_sensors(positions, headings, velocities, target_positions, obstacles, current_K, current_C):
     num_robots = len(positions)
     forces = np.zeros((num_robots, 2))
     desired_velocities = np.zeros((num_robots, 2))
+    updated_K_values = np.full(num_robots, current_K)
+    updated_C_values = np.full(num_robots, current_C)
 
     for i in range(num_robots):
-        # Initialize forces
         alignment_force = np.zeros(2)
         cohesion_force = target_positions[i] - positions[i]
         avoidance_force = np.zeros(2)
         robot_repulsion_force = np.zeros(2)
 
-        # Raycasting sensors (center, left, right)
+        # Obstacle detection via sensors
         center_distance, center_repulsion = raycast_sensor(positions[i], headings[i], 0, obstacles, sensor_detection_distance)
-        left_distance, left_repulsion = raycast_sensor(positions[i], headings[i], np.deg2rad(30), obstacles, sensor_detection_distance)
-        right_distance, right_repulsion = raycast_sensor(positions[i], headings[i], -np.deg2rad(30), obstacles, sensor_detection_distance)
 
-        # Avoidance force for obstacles based on raycasting
+        # Gradual adjustment of K and C
+        updated_K_values[i], updated_C_values[i] = adjust_alignment_cohesion_gradual(updated_K_values[i], updated_C_values[i], center_distance)
+
+        # Avoidance force for obstacles
         if center_distance < sensor_detection_distance:
-            effective_distance = max(center_distance - sensor_buffer_radius, 1e-6)  # Avoid divide-by-zero
+            effective_distance = max(center_distance - sensor_buffer_radius, 1e-6)
             avoidance_force += center_repulsion * (beta / effective_distance)
-        if left_distance < sensor_detection_distance:
-            effective_distance = max(left_distance - sensor_buffer_radius, 1e-6)
-            avoidance_force += left_repulsion * (beta / effective_distance)
-        if right_distance < sensor_detection_distance:
-            effective_distance = max(right_distance - sensor_buffer_radius, 1e-6)
-            avoidance_force += right_repulsion * (beta / effective_distance)
 
         # Repulsion force and safety boundary between robots
         for j in range(num_robots):
             if i == j:
-                continue  # Skip self
-
+                continue
             direction = positions[i] - positions[j]
             distance = np.linalg.norm(direction)
 
-            if distance < sensor_buffer_radius:  # Repulsion within buffer radius
-                effective_distance = max(distance, 1e-6)  # Avoid divide-by-zero
+            if distance < sensor_buffer_radius:
+                effective_distance = max(distance, 1e-6)
                 robot_repulsion_force += (direction / effective_distance) * (alpha / effective_distance)
 
-            # Safety boundary enforcement: Correct positions if too close
-            if distance < sensor_buffer_radius * 0.8:  # Safety margin (80% of buffer radius)
-                correction = (sensor_buffer_radius * 0.8 - distance) * (direction / (distance + 1e-6))
-                positions[i] += correction * 0.5  # Adjust position slightly
-                positions[j] -= correction * 0.5  # Adjust the neighbor slightly in opposite direction
-
-        # Alignment force (match headings with neighbors)
-        neighbors = [
-            j for j in range(num_robots)
-            if i != j and np.linalg.norm(positions[i] - positions[j]) < sensor_detection_distance
-        ]
+        # Alignment force (average heading of neighbors)
+        neighbors = [j for j in range(num_robots) if i != j and np.linalg.norm(positions[i] - positions[j]) < sensor_detection_distance]
         if neighbors:
             avg_heading = np.mean([headings[j] for j in neighbors])
-            alignment_force = np.array([
-                np.cos(avg_heading) - np.cos(headings[i]),
-                np.sin(avg_heading) - np.sin(headings[i])
-            ])
+            alignment_force = np.array([np.cos(avg_heading) - np.cos(headings[i]), np.sin(avg_heading) - np.sin(headings[i])])
 
         # Combine forces
         forces[i] = (
-            alpha * cohesion_force +
+            updated_C_values[i] * cohesion_force +
             beta * avoidance_force +
-            K * alignment_force +
+            updated_K_values[i] * alignment_force +
             robot_repulsion_force
         )
 
-    return forces, desired_velocities
-
+    return forces, desired_velocities, np.mean(updated_K_values), np.mean(updated_C_values)
 
 # To make sure the robots do not go out of the boundary of the world
 def enforce_boundary_conditions(positions, width, world_boundary_tolerance):
@@ -324,6 +335,34 @@ def update_positions_and_headings(positions, headings, forces, max_speed, bounda
     positions = enforce_boundary_conditions(positions, *boundary_conditions)
     return positions, headings
 
+
+def check_collisions(positions, obstacles):
+    """
+    Checks if any robot collides with another robot or an obstacle.
+    Removes the robot from the simulation if a collision is detected.
+    """
+    to_remove = set()
+
+    # Check for collisions between robots
+    for i in range(len(positions)):
+        for j in range(i + 1, len(positions)):
+            distance = np.linalg.norm(positions[i] - positions[j])
+            if distance < collision_zone:
+                to_remove.add(i)
+                to_remove.add(j)
+
+    # Check for collisions with obstacles
+    for i, pos in enumerate(positions):
+        for obs in obstacles:
+            obs_pos = obs["position"]
+            obs_radius = obs["radius"]
+            if np.linalg.norm(pos - obs_pos) < (obs_radius + collision_zone):
+                to_remove.add(i)
+
+    # Remove colliding robots
+    positions = np.delete(positions, list(to_remove), axis=0)
+    return positions, len(to_remove)
+
 def animate(frame, positions, headings, velocities, formation_radius, obstacles, scatter):
     moving_center = get_moving_center(frame, num_steps)
     target_positions = get_target_positions(moving_center, num_robots, formation_radius)
@@ -340,30 +379,76 @@ def main():
     positions = initialize_positions(num_robots, start_position, formation_radius)
     headings = np.random.uniform(0, 2 * np.pi, num_robots)
     velocities = np.zeros_like(positions)
-    obstacle_level = 3
+    obstacle_level = 4
     obstacles = generate_varied_obstacles_with_levels(
         circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size,
         offset_degrees, passage_width, obstacle_level
     )
+    current_K = K_base
+    current_C = C_base
+
     # Set up the plot
     fig, ax = plt.subplots()
-    # plot obstacles
     for obs in obstacles:
         if obs["type"] == "circle":
             circle = plt.Circle(obs["position"], obs["radius"], color='red', fill=True)
             ax.add_artist(circle)
-    # plot circle path
     ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
     scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
     ax.set_xlim(0, width)
     ax.set_ylim(0, width)
     ax.set_aspect('equal')
 
-    # Animation
+    # Add text to show the number of robots remaining
+    count_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12, color='darkred')
+
+    # Animation function
+    def animate(frame):
+        nonlocal positions, headings, current_K, current_C
+
+        moving_center = get_moving_center(frame, num_steps)
+        target_positions = get_target_positions(moving_center, len(positions), formation_radius)
+
+        # Check for collisions and update positions
+        positions, num_removed = check_collisions(positions, obstacles)
+        if num_removed > 0:
+            print(f"{num_removed} robots removed due to collisions at frame {frame}.")
+
+        if len(positions) == 0:
+            print("All robots have crashed.")
+            plt.close(fig)
+            return scatter,
+
+        forces, _, current_K, current_C = compute_forces_with_sensors(
+            positions, headings, velocities, target_positions, obstacles, current_K, current_C
+        )
+        positions[:], headings[:] = update_positions_and_headings(positions, headings, forces, max_speed, (width, world_boundary_tolerance))
+        scatter.set_offsets(positions)
+
+        # Update the count text
+        count_text.set_text(f"Robots remaining: {len(positions)}")
+
+        K_values_over_time.append(current_K)
+        C_values_over_time.append(current_C)
+
+        return scatter,
+
     ani = animation.FuncAnimation(
-        fig, animate, frames=num_steps, interval=100, repeat=True,
-        fargs=(positions, headings, velocities, formation_radius, obstacles, scatter)
+        fig, animate, frames=num_steps, interval=100, repeat=True
     )
+    plt.show()
+
+    # Output remaining robots after the simulation ends
+    print(f"Number of robots remaining after the simulation: {len(positions)}")
+
+    # Plot K and C values over time
+    plt.figure(figsize=(10, 6))
+    plt.plot(K_values_over_time, label='Alignment Strength (K)', color='blue')
+    plt.plot(C_values_over_time, label='Cohesion Strength (C)', color='green')
+    plt.xlabel('Time Step')
+    plt.ylabel('Strength Values')
+    plt.title('Alignment (K) and Cohesion (C) Strengths Over Time')
+    plt.legend()
     plt.show()
 
 if __name__ == "__main__":
