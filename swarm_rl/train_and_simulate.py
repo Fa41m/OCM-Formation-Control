@@ -162,6 +162,11 @@ class OfflineVideoCallback(BaseCallback):
             # 6. Update scatter
             scatter.set_offsets(positions)
             count_text.set_text(f"Robots remaining: {num_robots - len(collisions)}")
+            
+            # 7. Remove collided robots
+            # positions = np.delete(positions, collisions, axis=0)
+            # headings = np.delete(headings, collisions)
+            # velocities = np.delete(velocities, collisions, axis=0)
 
             local_step += 1
             # Terminate if we exceed max_frames or lose all robots
@@ -203,6 +208,18 @@ def main():
     # Just pass in the last known reward, or 0 if none
     last_reward = video_callback.episode_rewards[-1] if len(video_callback.episode_rewards) > 0 else 0.0
     video_callback.offline_playback(model, final_video, last_reward)
+    
+    # plot the episode rewards log
+    with open(video_callback.log_path, "r") as f:
+        lines = f.readlines()
+        episode_rewards = [float(line.split()[-1]) for line in lines]
+        plt.plot(episode_rewards)
+        plt.xlabel("Episode")
+        plt.ylabel("Reward")
+        plt.title("Episode Rewards Log")
+        plt.grid()
+        plt.savefig("episode_rewards_log.png")
+        plt.show()
 
 if __name__ == "__main__":
     main()

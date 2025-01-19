@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 # Global Parameters
+
+formation_type = "triangle"  # <<--- CHOOSE "circle" or "triangle" here
+
 num_robots = 20
 num_steps = 400
 # Attraction strength
@@ -59,8 +62,10 @@ C_values = []
 # Global collision zone threshold
 collision_zone = 0.1  # Threshold for collision detection
 
-# Radius of the formation
+# For circle formation
 formation_radius = max(sensor_buffer_radius * num_robots / (2 * np.pi), sensor_buffer_radius)
+# For triangle formation (you can adjust as needed)
+formation_size_triangle = 1.0  # spacing scale for the triangle
 
 # Helper Functions
 def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_size, max_size, offset_degrees, passage_width, level):
@@ -104,7 +109,7 @@ def generate_varied_obstacles_with_levels(center, radius, num_obstacles, min_siz
 
     return obstacles
 
-
+# Circle Formation
 def initialize_positions(num_robots, start_position, formation_radius):
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
     return np.array([
@@ -122,6 +127,87 @@ def get_target_positions(moving_center, num_robots, formation_radius):
         moving_center + formation_radius * np.array([np.cos(angle), np.sin(angle)])
         for angle in angles
     ])
+    
+# Triangle Formation
+def initialize_positions_triangle(num_robots, start_position, formation_size):
+    # Compute heading angle normal to the circle at start_position
+    radius_vector = start_position - circle_center
+    heading_vector = radius_vector  # Normal vector
+    heading_angle = np.arctan2(heading_vector[1], heading_vector[0])
+
+    # Determine rows needed for the triangle
+    row = 1
+    total_bots = 0
+    rows = []
+    while total_bots < num_robots:
+        bots_in_row = row
+        if total_bots + bots_in_row > num_robots:
+            bots_in_row = num_robots - total_bots
+        rows.append(bots_in_row)
+        total_bots += bots_in_row
+        row += 1
+
+    positions_relative = []
+    h_spacing = formation_size * 1.5  # vertical spacing between rows
+    v_spacing = formation_size       # horizontal spacing
+    y_offset = 0
+
+    for i, bots_in_row in enumerate(rows):
+        x_offset = -v_spacing * (bots_in_row - 1) / 2.0
+        for j in range(bots_in_row):
+            positions_relative.append([x_offset + j * v_spacing, y_offset])
+        y_offset -= h_spacing
+
+    positions_relative = np.array(positions_relative)
+
+    # Rotate by heading_angle
+    rotation_matrix = np.array([
+        [np.cos(heading_angle), -np.sin(heading_angle)],
+        [np.sin(heading_angle),  np.cos(heading_angle)]
+    ])
+    rotated_positions = positions_relative @ rotation_matrix.T
+
+    # Translate to start_position
+    initial_positions = rotated_positions + start_position
+    return initial_positions
+
+def get_target_positions_triangle(moving_center, num_robots, formation_size):
+    radius_vector = moving_center - circle_center
+    heading_vector = radius_vector
+    heading_angle = np.arctan2(heading_vector[1], heading_vector[0])
+
+    row = 1
+    total_bots = 0
+    rows = []
+    while total_bots < num_robots:
+        bots_in_row = row
+        if total_bots + bots_in_row > num_robots:
+            bots_in_row = num_robots - total_bots
+        rows.append(bots_in_row)
+        total_bots += bots_in_row
+        row += 1
+
+    positions_relative = []
+    h_spacing = formation_size * 1.5
+    v_spacing = formation_size
+    y_offset = 0
+
+    for i, bots_in_row in enumerate(rows):
+        x_offset = -v_spacing * (bots_in_row - 1) / 2.0
+        for j in range(bots_in_row):
+            positions_relative.append([x_offset + j * v_spacing, y_offset])
+        y_offset -= h_spacing
+
+    positions_relative = np.array(positions_relative)
+
+    rotation_matrix = np.array([
+        [np.cos(heading_angle), -np.sin(heading_angle)],
+        [np.sin(heading_angle),  np.cos(heading_angle)]
+    ])
+    rotated_positions = positions_relative @ rotation_matrix.T
+
+    target_positions = rotated_positions + moving_center
+    return target_positions
 
 # TODO: Combine the sensors to get a better result for the robots to avoid obstacles
 def raycast_sensor(position, heading, sensor_angle, obstacles, sensor_detection_distance):
@@ -184,64 +270,6 @@ def detect_with_sensor(position, heading, sensor_angle, robots, sensor_detection
             return True
 
     return False
-
-# TODO: Work fine but sometimes the robots crash into each other
-# def compute_forces_with_sensors(positions, headings, velocities, target_positions, obstacles):
-#     """
-#     Compute forces using sensor-based detection, alignment, cohesion, and repulsion.
-#     """
-#     num_robots = len(positions)
-#     forces = np.zeros((num_robots, 2))
-#     desired_velocities = np.zeros((num_robots, 2))
-
-#     for i in range(num_robots):
-#         # Initialize forces
-#         alignment_force = np.zeros(2)
-#         cohesion_force = target_positions[i] - positions[i]
-#         avoidance_force = np.zeros(2)
-#         repulsion_force = np.zeros(2)
-
-#         # Raycasting sensors (center, left, right)
-#         center_distance, center_repulsion = raycast_sensor(positions[i], headings[i], 0, obstacles, sensor_detection_distance)
-#         left_distance, left_repulsion = raycast_sensor(positions[i], headings[i], np.deg2rad(30), obstacles, sensor_detection_distance)
-#         right_distance, right_repulsion = raycast_sensor(positions[i], headings[i], -np.deg2rad(30), obstacles, sensor_detection_distance)
-
-#         # Avoidance force based on sensor readings
-#         if center_distance < sensor_detection_distance:
-#             avoidance_force += center_repulsion * (beta / center_distance)
-#         if left_distance < sensor_detection_distance:
-#             avoidance_force += left_repulsion * (beta / left_distance)
-#         if right_distance < sensor_detection_distance:
-#             avoidance_force += right_repulsion * (beta / right_distance)
-
-#         # Compute repulsion force (between robots)
-#         neighbors = [
-#             j for j in range(num_robots)
-#             if i != j and np.linalg.norm(positions[i] - positions[j]) < sensor_detection_distance
-#         ]
-#         for j in neighbors:
-#             direction = positions[i] - positions[j]
-#             distance = np.linalg.norm(direction)
-#             if distance < sensor_buffer_radius:  # Repulsion only within buffer
-#                 repulsion_force += (direction / (distance + 1e-6)) * alpha
-
-#         # Alignment force (match headings with neighbors)
-#         if neighbors:
-#             avg_heading = np.mean([headings[j] for j in neighbors])
-#             alignment_force = np.array([
-#                 np.cos(avg_heading) - np.cos(headings[i]),
-#                 np.sin(avg_heading) - np.sin(headings[i])
-#             ])
-
-#         # Combine forces
-#         forces[i] = (
-#             alpha * cohesion_force +
-#             beta * avoidance_force +
-#             K * alignment_force +
-#             repulsion_force
-#         )
-
-#     return forces, desired_velocities
 
 # Gradual transition function with bounds and early stopping
 def smooth_transition_with_bounds(current_value, target_value, smoothing_factor, value_min, value_max):
@@ -385,10 +413,18 @@ def animate(frame, positions, headings, velocities, formation_radius, obstacles,
 # Main Function
 def main():
     # Initialize Swarm and Obstacles
-    # formation_radius = max(sensor_buffer_radius * num_robots / (2 * np.pi), sensor_buffer_radius)
     start_position = circle_center + circle_radius * np.array([1, 0])
-    positions = initialize_positions(num_robots, start_position, formation_radius)
+    # positions = initialize_positions(num_robots, start_position, formation_radius)
     headings = np.random.uniform(0, 2 * np.pi, num_robots)
+    # Depending on formation_type, choose how to initialize
+    if formation_type.lower() == "triangle":
+        # Triangle formation
+        positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle)
+        get_target_positions_fn = get_target_positions_triangle
+    else:
+        # Circle formation (default)
+        positions = initialize_positions(num_robots, start_position, formation_radius)
+        get_target_positions_fn = get_target_positions
     velocities = np.zeros_like(positions)
     obstacles = generate_varied_obstacles_with_levels(
         circle_center, circle_radius, num_obstacles, min_obstacle_size, max_obstacle_size,
@@ -417,10 +453,10 @@ def main():
         nonlocal positions, headings, current_K, current_C
 
         moving_center = get_moving_center(frame, num_steps)
-        target_positions = get_target_positions(moving_center, len(positions), formation_radius)
+        target_positions = get_target_positions_fn(moving_center, len(positions), formation_radius if formation_type=="circle" else formation_size_triangle)
 
         # Check for collisions and update positions
-        positions, num_removed = check_collisions(positions, obstacles)
+        positions[:], num_removed = check_collisions(positions, obstacles)
         if num_removed > 0:
             print(f"{num_removed} robots removed due to collisions at frame {frame}.")
 
