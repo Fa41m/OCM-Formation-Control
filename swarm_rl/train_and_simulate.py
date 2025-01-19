@@ -10,9 +10,11 @@ from env import SwarmEnv
 from ocm import (
     num_steps,
     check_collisions,
+    formation_type,
     compute_forces_with_sensors,
     update_positions_and_headings,
     get_target_positions,
+    get_target_positions_triangle,
     get_moving_center,
     formation_radius,
     width,
@@ -24,7 +26,8 @@ from ocm import (
     passage_width,
     obstacle_level,
     max_speed,
-    world_boundary_tolerance
+    world_boundary_tolerance,
+    formation_size_triangle,
 )
 
 class OfflineVideoCallback(BaseCallback):
@@ -94,14 +97,17 @@ class OfflineVideoCallback(BaseCallback):
         We'll also put the reward in the video title.
         """
         from ocm import (
-            initialize_positions, circle_center, circle_radius,
+            initialize_positions, initialize_positions_triangle, circle_center, circle_radius,
             sensor_detection_distance, sensor_buffer_radius,
             generate_varied_obstacles_with_levels
         )
 
         # Setup for offline playback
         start_position = circle_center + circle_radius * np.array([1, 0])
-        positions = initialize_positions(num_robots, start_position, formation_radius)
+        if formation_type == 'circle':
+            positions = initialize_positions(num_robots, start_position, formation_radius)
+        elif formation_type == 'triangle':
+            positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle)
         headings = np.random.uniform(0, 2 * np.pi, num_robots)
         velocities = np.zeros_like(positions)
 
@@ -146,7 +152,10 @@ class OfflineVideoCallback(BaseCallback):
 
             # 3. Move center & compute target positions
             moving_center = get_moving_center(local_step, num_steps)
-            t_positions = get_target_positions(moving_center, len(positions), formation_radius)
+            if formation_type == 'circle':
+                t_positions = get_target_positions(moving_center, len(positions), formation_radius)
+            elif formation_type == 'triangle':
+                t_positions = get_target_positions_triangle(moving_center, len(positions), formation_size_triangle)
 
             # 4. Compute forces (with collisions)
             forces, _, _, _, collisions = compute_forces_with_sensors(

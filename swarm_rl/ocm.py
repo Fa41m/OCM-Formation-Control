@@ -447,6 +447,8 @@ def main():
 
     # Add text to show the number of robots remaining
     count_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, fontsize=12, color='darkred')
+    
+    radial_errors = []  # List to store radial error at each timestep
 
     # Animation function
     def animate(frame):
@@ -474,6 +476,11 @@ def main():
         # Update the count text
         count_text.set_text(f"Robots remaining: {len(positions)}")
         # count_text.set_text(f"Robots remaining: {num_robots - len(collisions)}")
+        
+        # Calculate radial error
+        distances_from_center = np.linalg.norm(positions - circle_center, axis=1)
+        radial_error = np.mean(np.abs(distances_from_center - circle_radius))
+        radial_errors.append(radial_error)  # Store the radial error for this timestep
 
         K_values_over_time.append(current_K)
         C_values_over_time.append(current_C)
@@ -495,6 +502,15 @@ def main():
     plt.xlabel('Time Step')
     plt.ylabel('Strength Values')
     plt.title('Alignment (K) and Cohesion (C) Strengths Over Time')
+    plt.legend()
+    plt.show()
+    
+    # Plot Radial Error Over Time
+    plt.figure(figsize=(10, 6))
+    plt.plot(radial_errors, label='Radial Error', color='red')
+    plt.xlabel('Time Step')
+    plt.ylabel('Radial Error (Distance from Circle)')
+    plt.title('Radial Error Over Time')
     plt.legend()
     plt.show()
 

@@ -5,14 +5,16 @@ import numpy as np
 # Import only the basics needed from ocm:
 from ocm import (
     initialize_positions,
+    initialize_positions_triangle,
     compute_forces_with_sensors,
     update_positions_and_headings,
     get_target_positions,
+    get_target_positions_triangle,
     get_moving_center,
     # We do NOT import check_collisions here, because we won't remove robots in the env
     width, num_robots, formation_radius, max_speed, num_steps,
     generate_varied_obstacles_with_levels,
-    num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width, obstacle_level, K_base, C_base
+    num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width, obstacle_level, K_base, C_base, formation_type, formation_size_triangle
 )
 
 
@@ -40,6 +42,7 @@ class SwarmEnv(gym.Env):
         self.offset_degrees = offset_degrees
         self.passage_width = passage_width
         self.obstacle_level = obstacle_level  # Choose the level of obstacles to combine different types
+        self.formation_type = formation_type  # Choose the formation type
 
         self.width = width
         self.max_speed = max_speed
@@ -83,7 +86,11 @@ class SwarmEnv(gym.Env):
         # Initialize robot positions, headings, velocities
         # self.positions = initialize_positions(num_robots, self.circle_center, formation_radius)
         start_position = self.circle_center + self.circle_radius * np.array([1, 0])
-        self.positions = initialize_positions(num_robots, start_position, formation_radius)
+        if self.formation_type == 'circle':
+            self.positions = initialize_positions(num_robots, start_position, formation_radius)
+        elif self.formation_type == 'triangle':
+            self.positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle)
+        # self.positions = initialize_positions(num_robots, start_position, formation_radius)
         self.headings = np.random.uniform(0, 2 * np.pi, num_robots)
         self.velocities = np.zeros_like(self.positions)
 
@@ -122,9 +129,14 @@ class SwarmEnv(gym.Env):
 
         # 2. Compute next positions using forces
         moving_center = get_moving_center(self.steps, num_steps)
-        target_positions = get_target_positions(
-            moving_center, len(self.positions), formation_radius
-        )
+        if self.formation_type == 'circle':
+            target_positions = get_target_positions(
+                moving_center, len(self.positions), formation_radius
+            )
+        elif self.formation_type == 'triangle':
+            target_positions = get_target_positions_triangle(
+                moving_center, len(self.positions), formation_size_triangle
+            )
 
         # We do NOT remove collided robots here.
         forces, _, _, _, collisions = compute_forces_with_sensors(
@@ -150,16 +162,24 @@ class SwarmEnv(gym.Env):
         reward = 1 # Base reward for each step
         done = False
         if collisions:  # Penalize collisions
-            reward = 0  # Penalize all collisions equally
+            reward = -10 * len(collisions)
             done = True  # End episode if there are collisions
         if not done:
-            avg_distance = self._calculate_average_pairwise_distance()
-            distance_threshold = formation_radius * 1  # Adjust threshold as needed
-            if avg_distance < distance_threshold:
-                reward += 0.001  # Reward for staying close
-                
-            if avg_distance > distance_threshold * 2.5:
-                reward -= 0.01
+            if self.formation_type == 'circle':
+                avg_distance = self._calculate_average_pairwise_distance()
+                distance_threshold = formation_radius * 1  # Adjust threshold as needed
+                if avg_distance < distance_threshold:
+                    reward += 0.001  # Reward for staying close
+                    
+                if avg_distance > distance_threshold * 2.5:
+                    reward -= 0.01
+            elif self.formation_type == 'triangle':
+                avg_distance = self._calculate_average_pairwise_distance()
+                distance_threshold = formation_size_triangle * 1
+                if avg_distance < distance_threshold:
+                    reward += 0.0001
+                if avg_distance > distance_threshold * 1.5:
+                    reward -= 0.01
 
         self.steps += 1
         # done = self.steps >= self.max_episode_steps
