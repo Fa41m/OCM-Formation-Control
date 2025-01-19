@@ -270,6 +270,8 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
     desired_velocities = np.zeros((num_robots, 2))
     updated_K_values = np.full(num_robots, current_K)
     updated_C_values = np.full(num_robots, current_C)
+    collisions = set()  # Store indices of robots involved in collisions
+    collision_threshold = collision_zone  # Threshold for detecting collisions
 
     for i in range(num_robots):
         alignment_force = np.zeros(2)
@@ -299,6 +301,10 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
                 effective_distance = max(distance, 1e-6)
                 robot_repulsion_force += (direction / effective_distance) * (alpha / effective_distance)
 
+                # Detect collisions between robots
+                if distance < collision_threshold:  # Define collision_threshold for collisions
+                    collisions.update([i, j])  # Add both robots to the collision set
+
         # Alignment force (average heading of neighbors)
         neighbors = [j for j in range(num_robots) if i != j and np.linalg.norm(positions[i] - positions[j]) < sensor_detection_distance]
         if neighbors:
@@ -313,7 +319,7 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
             robot_repulsion_force
         )
 
-    return forces, desired_velocities, np.mean(updated_K_values), np.mean(updated_C_values)
+    return forces, desired_velocities, np.mean(updated_K_values), np.mean(updated_C_values), collisions
 
 # To make sure the robots do not go out of the boundary of the world
 def enforce_boundary_conditions(positions, width, world_boundary_tolerance):
@@ -423,7 +429,7 @@ def main():
             plt.close(fig)
             return scatter,
 
-        forces, _, current_K, current_C = compute_forces_with_sensors(
+        forces, _, current_K, current_C, collisions = compute_forces_with_sensors(
             positions, headings, velocities, target_positions, obstacles, current_K, current_C
         )
         positions[:], headings[:] = update_positions_and_headings(positions, headings, forces, max_speed, (width, world_boundary_tolerance))
@@ -431,6 +437,7 @@ def main():
 
         # Update the count text
         count_text.set_text(f"Robots remaining: {len(positions)}")
+        # count_text.set_text(f"Robots remaining: {num_robots - len(collisions)}")
 
         K_values_over_time.append(current_K)
         C_values_over_time.append(current_C)

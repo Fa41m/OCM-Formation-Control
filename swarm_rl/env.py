@@ -12,12 +12,12 @@ from ocm import (
     # We do NOT import check_collisions here, because we won't remove robots in the env
     width, num_robots, formation_radius, max_speed, num_steps,
     generate_varied_obstacles_with_levels,
-    num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width, obstacle_level
+    num_obstacles, min_obstacle_size, max_obstacle_size, offset_degrees, passage_width, obstacle_level, K_base, C_base
 )
 
 
 class SwarmEnv(gym.Env):
-    def __init__(self, seed_value=42):
+    def __init__(self, seed_value=42, episode_length_factor=4):
         super(SwarmEnv, self).__init__()
         # Action space: Adjust K (alignment), C (cohesion)
         self.action_space = spaces.Box(
@@ -46,8 +46,10 @@ class SwarmEnv(gym.Env):
         self.seed(seed_value)
 
         # Initial “base” alignment & cohesion (overwritten by agent's actions)
-        self.K_base = 0.7
-        self.C_base = 0.6
+        self.K_base = K_base
+        self.C_base = C_base
+        
+        self.episode_length_factor = episode_length_factor
 
         self.reset()
 
@@ -86,6 +88,7 @@ class SwarmEnv(gym.Env):
         self.velocities = np.zeros_like(self.positions)
 
         self.steps = 0
+        self.max_episode_steps = num_steps * self.episode_length_factor
         return self._get_obs(), {}
 
     def _get_obs(self):
@@ -96,6 +99,22 @@ class SwarmEnv(gym.Env):
             self.velocities.flatten()
         ])
         return state
+    
+    def _calculate_average_pairwise_distance(self):
+        """Calculate the average pairwise distance between all robots."""
+        num_robots = len(self.positions)
+        total_distance = 0
+        count = 0
+
+        for i in range(num_robots):
+            for j in range(i + 1, num_robots):
+                total_distance += np.linalg.norm(self.positions[i] - self.positions[j])
+                count += 1
+
+        if count == 0:  # Avoid division by zero
+            return 0
+
+        return total_distance / count
 
     def step(self, action):
         # 1. Take action = [K, C], override environment’s K_base, C_base
@@ -108,7 +127,7 @@ class SwarmEnv(gym.Env):
         )
 
         # We do NOT remove collided robots here.
-        forces, _, _, _ = compute_forces_with_sensors(
+        forces, _, _, _, collisions = compute_forces_with_sensors(
             self.positions,
             self.headings,
             self.velocities,
@@ -128,12 +147,24 @@ class SwarmEnv(gym.Env):
         )
 
         # 4. Simple reward (no collision removal). You can make this more sophisticated.
-        reward = 0.01
-        if self.steps >= num_steps - 1:
-            reward += 100
+        reward = 1 # Base reward for each step
+        done = False
+        if collisions:  # Penalize collisions
+            reward = 0  # Penalize all collisions equally
+            done = True  # End episode if there are collisions
+        if not done:
+            avg_distance = self._calculate_average_pairwise_distance()
+            distance_threshold = formation_radius * 1  # Adjust threshold as needed
+            if avg_distance < distance_threshold:
+                reward += 0.001  # Reward for staying close
+                
+            if avg_distance > distance_threshold * 2.5:
+                reward -= 0.01
 
         self.steps += 1
-        done = self.steps >= num_steps  # Terminate after num_steps
+        # done = self.steps >= self.max_episode_steps
+        if self.steps >= self.max_episode_steps:
+            done = True
 
         truncated = False  # No external truncation logic
         obs = self._get_obs()
