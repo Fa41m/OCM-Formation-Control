@@ -158,31 +158,32 @@ class SwarmEnv(gym.Env):
             (self.width, 0.5)
         )
 
-        # 4. Simple reward (no collision removal). You can make this more sophisticated.
-        reward = 1 # Base reward for each step
+        # 4. Reward calculation
+        reward = 0.1  # Increased base reward for each step
         done = False
         if collisions:  # Penalize collisions
-            reward = -10 * len(collisions)
+            reward = -100 * len(collisions)  # Increased penalty for collisions
             done = True  # End episode if there are collisions
         if not done:
             if self.formation_type == 'circle':
                 avg_distance = self._calculate_average_pairwise_distance()
                 distance_threshold = formation_radius * 1  # Adjust threshold as needed
                 if avg_distance < distance_threshold:
-                    reward += 0.001  # Reward for staying close
-                    
+                    reward += 1  # Increased reward for staying close
                 if avg_distance > distance_threshold * 2.5:
-                    reward -= 0.01
+                    reward -= 0.5  # Decreased penalty for being too far
             elif self.formation_type == 'triangle':
                 avg_distance = self._calculate_average_pairwise_distance()
                 distance_threshold = formation_size_triangle * 1
                 if avg_distance < distance_threshold:
-                    reward += 0.0001
+                    reward += 0.005  # Increased reward for staying close
                 if avg_distance > distance_threshold * 1.5:
-                    reward -= 0.01
+                    reward -= 0.01  # Decreased penalty for being too far
+
+            # Cap the reward to avoid outliers
+            reward = min(1000, reward)
 
         self.steps += 1
-        # done = self.steps >= self.max_episode_steps
         if self.steps >= self.max_episode_steps:
             done = True
 

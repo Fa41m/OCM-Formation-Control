@@ -4,7 +4,7 @@ import matplotlib.animation as animation
 
 # Global Parameters
 
-formation_type = "triangle"  # <<--- CHOOSE "circle" or "triangle" here
+formation_type = "circle"  # <<--- CHOOSE "circle" or "triangle" here
 
 num_robots = 20
 num_steps = 400
@@ -13,7 +13,7 @@ alpha = 0.4
 # Repulsion strength
 beta = 0.4
 
-obstacle_level = 1
+obstacle_level = 3
 
 K_base = 0.7  # Base alignment strength
 C_base = 0.6  # Base cohesion strength
