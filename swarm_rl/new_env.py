@@ -1,218 +1,271 @@
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
 
-# Import functions and parameters from your simulation module.
-# (Here we assume you’ve renamed your simulation file to “new_ocm.py”)
 from new_ocm import (
     initialize_positions,
     initialize_positions_triangle,
     compute_forces_with_sensors,
     update_positions_and_headings,
-    get_target_positions,
-    get_target_positions_triangle,
-    get_moving_center,
+    # adapt_parameters  # We are no longer calling this, so can be ignored/removed
     check_collisions,
-    adapt_parameters,
     enforce_boundary_conditions,
-    width,
+    # Various global constants
+    world_width,
     num_robots,
-    formation_radius_base,
-    formation_size_triangle_base,
-    max_speed,
+    robot_max_speed,
     num_steps,
     generate_varied_obstacles_with_levels,
     num_obstacles, min_obstacle_size, max_obstacle_size,
     offset_degrees, passage_width, obstacle_level,
-    K_base, C_base, alpha_base, beta_base, formation_type,
+    cost_w1, cost_w2, cost_w3, psi_threshold,
+    compute_swarm_alignment,
+    formation_type,
+    formation_radius_base,
+    formation_size_triangle_base,
     sensor_detection_distance,
-    collision_zone  # used for collision checking
+    # We used to rely on alpha_base, etc., but now RL overrides them entirely
 )
 
-# In case you want to update velocities as well, you could create a helper:
-def update_velocities(forces, max_speed):
-    new_velocities = []
-    for force in forces:
-        speed = np.linalg.norm(force)
-        if speed > max_speed:
-            force = (max_speed / speed) * force
-        new_velocities.append(force)
-    return np.array(new_velocities)
-
+def update_velocities(forces, robot_max_speed):
+    # Same as before: clip forces by speed
+    clipped = []
+    for f in forces:
+        spd = np.linalg.norm(f)
+        if spd > robot_max_speed:
+            f = (robot_max_speed / spd) * f
+        clipped.append(f)
+    return np.array(clipped)
 
 class SwarmEnv(gym.Env):
-    def __init__(self, seed_value=42, episode_length_factor=4):
-        super(SwarmEnv, self).__init__()
-        # Action space: agent controls the “base” alignment and cohesion parameters.
-        self.action_space = spaces.Box(
-            low=np.array([0.005, 0.005]),
-            high=np.array([0.995, 0.995]),
+    """
+    Example environment implementing:
+      (1) Heavier collision penalty & survival bonus
+      (2) RL control over alpha,beta,K,C (but NOT formation_radius anymore)
+      (3) Path completion (4 laps) bonus + partial progress reward
+    """
+
+    def __init__(self, seed_value=42):
+        super().__init__()
+
+        # -------------------------------
+        # Action space:
+        # Now 4D => [alpha, beta, K, C]
+        # alpha,beta in [0,1], K,C in [0.005,0.995], etc.
+        # Formation radius is fixed internally, not learned.
+        # -------------------------------
+        self.formation_type = formation_type
+        if formation_type.lower() == 'triangle':
+            self.formation_base = formation_size_triangle_base
+        else:
+            self.formation_base = formation_radius_base
+
+        self.action_space = gym.spaces.Box(
+            low=np.array([0.0,  0.0,   0.005, 0.005]),
+            high=np.array([1.0, 1.0,   0.995, 0.995]),
             dtype=np.float32
         )
-        # Observation: we include positions, headings, and velocities.
-        obs_shape = (num_robots * 5,)  # for each robot: x, y, heading, vx, vy
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=obs_shape,
-            dtype=np.float32
+
+        # Observation space: same as before
+        obs_dim = num_robots * 5  # (x,y,heading,vx,vy) each
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(obs_dim,), dtype=np.float32
         )
-        
-        # Obstacle and formation parameters:
+
+        self.world_width = world_width
+        self.robot_max_speed = robot_max_speed
+
         self.num_obstacles = num_obstacles
-        self.min_obstacle_size = min_obstacle_size
-        self.max_obstacle_size = max_obstacle_size
-        self.offset_degrees = offset_degrees
-        self.passage_width = passage_width
         self.obstacle_level = obstacle_level
-        self.formation_type = formation_type  # "circle" or "triangle"
 
-        self.width = width
-        self.max_speed = max_speed
+        # 4 laps => 8π
+        self.max_angle = 8.0 * np.pi
+        self.current_angle_accum = 0.0
+
+        self.steps = 0
+        # for partial progress reward
+        self.last_angle_accum = 0.0
+
         self.seed(seed_value)
+        self._setup_episode()
 
-        # The “base” alignment & cohesion (will be overridden by the agent’s actions)
-        self.K_base = K_base
-        self.C_base = C_base
-        # Also start with the base repulsion parameters
-        self.alpha = alpha_base
-        self.beta = beta_base
-        
-        self.episode_length_factor = episode_length_factor
+    def seed(self, seed_val):
+        np.random.seed(seed_val)
+        self.seed_value = seed_val
 
-        self.reset()
+    def _setup_episode(self):
+        # Circle center & radius
+        self.circle_center = np.array([self.world_width / 2, self.world_width / 2])
+        self.circle_radius = self.world_width / 4
 
-    def seed(self, seed_value):
-        np.random.seed(seed_value)
-        self.seed_value = seed_value
+        # Obstacles
+        self.obstacles = generate_varied_obstacles_with_levels(
+            center=self.circle_center,
+            radius=self.circle_radius,
+            num_obstacles=self.num_obstacles,
+            min_size=min_obstacle_size,
+            max_size=max_obstacle_size,
+            offset_degrees=offset_degrees,
+            passage_width=passage_width,
+            level=self.obstacle_level
+        )
+
+        # Initialize swarm
+        start_position = self.circle_center + self.circle_radius * np.array([1,0])
+        if formation_type.lower() == 'triangle':
+            self.positions = initialize_positions_triangle(num_robots, start_position, 5.0)
+        else:
+            self.positions = initialize_positions(num_robots, start_position, 5.0)
+            # "5.0" is just a small initial radius for the arrangement
+
+        self.headings = np.random.uniform(0, 2*np.pi, num_robots)
+        self.velocities = np.zeros_like(self.positions)
+
+        # track angles
+        self.current_angle_accum = 0.0
+        self.last_angle_accum = 0.0
+
+        # figure out swarm center
+        swarm_center = np.mean(self.positions, axis=0)
+        rel = swarm_center - self.circle_center
+        self.last_angle = np.arctan2(rel[1], rel[0])
+
+        self.steps = 0
 
     def reset(self, seed=None, options=None):
         if seed is not None:
             self.seed(seed)
-
-        # Center and radius for the moving circle.
-        self.circle_center = np.array([self.width / 2, self.width / 2])
-        self.circle_radius = self.width / 4
-
-        # Generate obstacles.
-        self.obstacles = generate_varied_obstacles_with_levels(
-            self.circle_center,
-            self.circle_radius,
-            num_obstacles,
-            min_obstacle_size,
-            max_obstacle_size,
-            offset_degrees,
-            passage_width,
-            obstacle_level
-        )
-
-        # Initialize positions, headings, velocities.
-        start_position = self.circle_center + self.circle_radius * np.array([1, 0])
-        if self.formation_type.lower() == 'triangle':
-            self.positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle_base)
-        else:  # default "circle"
-            self.positions = initialize_positions(num_robots, start_position, formation_radius_base)
-        self.headings = np.random.uniform(0, 2 * np.pi, num_robots)
-        self.velocities = np.zeros_like(self.positions)
-
-        self.steps = 0
-        self.max_episode_steps = num_steps * self.episode_length_factor
+        self._setup_episode()
         return self._get_obs(), {}
 
     def _get_obs(self):
-        # Flatten positions, headings, and velocities.
-        state = np.concatenate([
+        return np.concatenate([
             self.positions.flatten(),
             self.headings.flatten(),
             self.velocities.flatten()
         ])
-        return state
-
-    def _calculate_average_pairwise_distance(self):
-        total_distance = 0.0
-        count = 0
-        for i in range(len(self.positions)):
-            for j in range(i + 1, len(self.positions)):
-                total_distance += np.linalg.norm(self.positions[i] - self.positions[j])
-                count += 1
-        return total_distance / count if count > 0 else 0
 
     def step(self, action):
-        # 1. Override the environment’s K_base and C_base with the agent’s action.
-        self.K_base, self.C_base = action
+        """
+        RL sets [alpha, beta, K, C].
+        Formation radius is fixed internally (self.formation_base).
+        """
+        alpha, beta, current_K, current_C = action
 
-        # 2. Adapt the formation parameters and repulsion strengths based on the current positions.
-        # (This returns the adapted formation radius/size and updates α and β.)
-        adapted_formation_radius, adapted_formation_size_triangle, self.alpha, self.beta = adapt_parameters(
-            self.positions, self.obstacles,
-            formation_radius_base, formation_size_triangle_base,
-            alpha_base, beta_base,
-            min_dist_threshold=4.0
-        )
+        # 1) The swarm center angle => path progress
+        swarm_center = np.mean(self.positions, axis=0)
+        rel_vec = swarm_center - self.circle_center
+        angle_now = np.arctan2(rel_vec[1], rel_vec[0])
 
-        # 3. Compute the moving center and target positions.
-        moving_center = get_moving_center(self.steps, num_steps)
-        if self.formation_type.lower() == 'triangle':
-            target_positions = get_target_positions_triangle(moving_center, len(self.positions), adapted_formation_size_triangle)
+        # angle delta in [-pi, +pi], fix for boundary crossing
+        delta_angle = angle_now - self.last_angle
+        if delta_angle > np.pi:
+            delta_angle -= 2*np.pi
+        elif delta_angle < -np.pi:
+            delta_angle += 2*np.pi
+
+        self.current_angle_accum += delta_angle
+        self.last_angle = angle_now
+
+        # 2) Define the "moving center" based on self.current_angle_accum
+        # The swarm tries to do 4 laps around the circle center
+        moving_center = self.circle_center + self.circle_radius * np.array([
+            np.cos(self.current_angle_accum),
+            np.sin(self.current_angle_accum)
+        ])
+
+        # 3) target positions (using a fixed formation_base)
+        if formation_type.lower() == 'triangle':
+            target_positions = initialize_positions_triangle(num_robots, moving_center, self.formation_base)
         else:
-            target_positions = get_target_positions(moving_center, len(self.positions), adapted_formation_radius)
+            target_positions = initialize_positions(num_robots, moving_center, self.formation_base)
 
-        # 4. Compute forces using the sensor-based function.
-        forces, self.K_base, self.C_base = compute_forces_with_sensors(
-            self.positions, self.headings, self.velocities,
-            target_positions, self.obstacles,
-            self.K_base, self.C_base,
-            self.alpha, self.beta
+        # 4) forces
+        forces, new_K, new_C = compute_forces_with_sensors(
+            self.positions,
+            self.headings,
+            self.velocities,
+            target_positions,
+            self.obstacles,
+            current_K, current_C,
+            alpha, beta
         )
 
-        # 5. Update positions and headings.
+        # 5) update positions
         self.positions, self.headings = update_positions_and_headings(
-            self.positions, self.headings, forces, self.max_speed,
-            (self.width, 0.5)
+            self.positions, self.headings, forces,
+            self.robot_max_speed,
+            (self.world_width, 0.5)
         )
-        # Also update velocities (using the same force clipping as in the update function).
-        self.velocities = update_velocities(forces, self.max_speed)
+        self.velocities = update_velocities(forces, self.robot_max_speed)
 
-        # 6. Check for collisions without removing robots.
-        # (Call the collision function on a copy so that the state is not modified.)
+        # collisions
         _, collision_indices = check_collisions(np.copy(self.positions), self.obstacles)
 
-        # 7. Reward calculation.
-        # Start with a small positive reward per step.
-        reward = 0.1
+        # --- Heavier collision penalty & survival bonus ---
         done = False
-        if collision_indices:
-            reward = -50 * len(collision_indices)
-            done = True  # End the episode if a collision occurs.
-        else:
-            # Reward is also based on how tightly the swarm is formed.
-            avg_distance = self._calculate_average_pairwise_distance()
-            if self.formation_type.lower() == 'circle':
-                # Use the adapted formation radius as a threshold.
-                distance_threshold = adapted_formation_radius * 1.0
-                if avg_distance < distance_threshold:
-                    reward += 1.0
-                elif avg_distance > distance_threshold * 2.5:
-                    reward -= 0.5
-            elif self.formation_type.lower() == 'triangle':
-                # For triangle formation, use the adapted triangle size.
-                distance_threshold = adapted_formation_size_triangle * 1.0
-                if avg_distance < distance_threshold:
-                    reward += 0.005
-                elif avg_distance > distance_threshold * 1.5:
-                    reward -= 0.01
-            # Clip reward if needed.
-            reward = min(1000, reward)
+        truncated = False
+        reward = 0.0
+        
+        # (Optional) penalty for cutting inside the circle:
+        distances_to_center = np.linalg.norm(self.positions - self.circle_center, axis=1)
+        # min_allowed_radius = self.circle_radius * 0.5
+        # too_close_mask = distances_to_center < min_allowed_radius
+        # penalty_for_cutting = 10.0
+        # if np.any(too_close_mask):
+        #     reward -= penalty_for_cutting * np.sum(too_close_mask)
+
+        # Reward for staying on the path
+        optimal_radius = self.circle_radius
+        distance_error = np.abs(distances_to_center - optimal_radius)
+        reward_for_path_following = np.exp(-distance_error)  
+        reward += np.mean(reward_for_path_following) * 15.0  
+
+        if not collision_indices:
+            reward -= 200.0 * len(collision_indices)
+            # done = True  # end if collision
+
+        # 6) compute alignment/cost
+        psi = compute_swarm_alignment(self.headings)
+        sum_forces = np.sum(np.linalg.norm(forces, axis=1))
+        time_progress = self.steps / float(num_steps * 2)
+        cost_step = (
+            cost_w1 * (1 - psi)**2
+            + cost_w2 * time_progress
+            + cost_w3 * sum_forces
+        )
+        reward -= cost_step
+        reward += 5.0 * psi
+
+        # Calculate a proximity penalty for each robot
+        proximity_penalty = 0.0
+        for pos in self.positions:
+            for obs in self.obstacles:
+                dist_to_obs = np.linalg.norm(pos - obs["position"]) - obs["radius"]
+                safe_distance = sensor_detection_distance * 0.5  # for example
+                if dist_to_obs < safe_distance:
+                    # Penalize more as the robot gets closer to the obstacle
+                    proximity_penalty += np.exp(-dist_to_obs)
+        reward -= proximity_penalty * 200  # obstacle_penalty_weight to tune
+
+
+        # path progress & completion bonus
+        angle_progress = abs(self.current_angle_accum) - self.last_angle_accum
+        if angle_progress > 0:
+            reward += 1.0 * angle_progress
+        self.last_angle_accum = abs(self.current_angle_accum)
+
+        # if abs(self.current_angle_accum) >= self.max_angle:
+        #     reward += 500.0
+        #     done = True
 
         self.steps += 1
-        if self.steps >= self.max_episode_steps:
-            done = True
+        if self.steps >= (num_steps * 4):
+            truncated = True
 
-        truncated = False
         obs = self._get_obs()
-        return obs, reward, done, truncated, {}
+        info = {}
+        return obs, reward, done, truncated, info
 
     def render(self, mode='rgb_array'):
-        # A simple render that returns a blank image (or you could use matplotlib here).
-        image = np.zeros((512, 512, 3), dtype=np.uint8)
-        return image
+        return np.zeros((512,512,3), dtype=np.uint8)
