@@ -17,7 +17,7 @@ from new_ocm import (
     generate_varied_obstacles_with_levels,
     num_obstacles, min_obstacle_size, max_obstacle_size,
     offset_degrees, passage_width, obstacle_level,
-    cost_w1, cost_w2, cost_w3, psi_threshold,
+    cost_w_align, cost_w_path, cost_w_obs, cost_w_force,
     compute_swarm_alignment,
     formation_type,
     formation_radius_base,
@@ -147,40 +147,18 @@ class SwarmEnv(gym.Env):
 
     def step(self, action):
         """
-        RL sets [alpha, beta, K, C].
-        Formation radius is fixed internally (self.formation_base).
+        RL sets [alpha, beta, K, C] – but now these mainly affect how the agents respond to obstacles.
+        The agents’ target is the current swarm centroid (to keep them together).
         """
         alpha, beta, current_K, current_C = action
 
-        # 1) The swarm center angle => path progress
+        # Update swarm center (for other potential use, though our target here is simply cohesion)
         swarm_center = np.mean(self.positions, axis=0)
-        rel_vec = swarm_center - self.circle_center
-        angle_now = np.arctan2(rel_vec[1], rel_vec[0])
-
-        # angle delta in [-pi, +pi], fix for boundary crossing
-        delta_angle = angle_now - self.last_angle
-        if delta_angle > np.pi:
-            delta_angle -= 2*np.pi
-        elif delta_angle < -np.pi:
-            delta_angle += 2*np.pi
-
-        self.current_angle_accum += delta_angle
-        self.last_angle = angle_now
-
-        # 2) Define the "moving center" based on self.current_angle_accum
-        # The swarm tries to do 4 laps around the circle center
-        moving_center = self.circle_center + self.circle_radius * np.array([
-            np.cos(self.current_angle_accum),
-            np.sin(self.current_angle_accum)
-        ])
-
-        # 3) target positions (using a fixed formation_base)
-        if formation_type.lower() == 'triangle':
-            target_positions = initialize_positions_triangle(num_robots, moving_center, self.formation_base)
-        else:
-            target_positions = initialize_positions(num_robots, moving_center, self.formation_base)
-
-        # 4) forces
+        
+        # Set each agent’s target to the swarm centroid to encourage cohesion.
+        target_positions = np.tile(swarm_center, (num_robots, 1))
+        
+        # Compute forces using your existing sensor-based force computation.
         forces, new_K, new_C = compute_forces_with_sensors(
             self.positions,
             self.headings,
@@ -190,8 +168,10 @@ class SwarmEnv(gym.Env):
             current_K, current_C,
             alpha, beta
         )
+        current_K = new_K
+        current_C = new_C
 
-        # 5) update positions
+        # Update positions, headings, and velocities.
         self.positions, self.headings = update_positions_and_headings(
             self.positions, self.headings, forces,
             self.robot_max_speed,
@@ -199,66 +179,49 @@ class SwarmEnv(gym.Env):
         )
         self.velocities = update_velocities(forces, self.robot_max_speed)
 
-        # collisions
+        # Check for collisions (which will be used for a crash penalty).
         _, collision_indices = check_collisions(np.copy(self.positions), self.obstacles)
 
-        # --- Heavier collision penalty & survival bonus ---
-        done = False
-        truncated = False
-        reward = 0.0
-        
-        # (Optional) penalty for cutting inside the circle:
-        distances_to_center = np.linalg.norm(self.positions - self.circle_center, axis=1)
-        # min_allowed_radius = self.circle_radius * 0.5
-        # too_close_mask = distances_to_center < min_allowed_radius
-        # penalty_for_cutting = 10.0
-        # if np.any(too_close_mask):
-        #     reward -= penalty_for_cutting * np.sum(too_close_mask)
+        # ---------------------------
+        # New Cost Function
+        # ---------------------------
+        # 1. Cohesion cost: penalize agents that are far from the swarm center.
+        #    (Here k_cohesion is a new parameter that you can tune.)
+        k_cohesion = 0.1  # try adjusting this value (e.g. 0.05 to 0.2)
+        cohesion_cost = k_cohesion * np.mean(np.linalg.norm(self.positions - swarm_center, axis=1)**2)
 
-        # Reward for staying on the path
-        optimal_radius = self.circle_radius
-        distance_error = np.abs(distances_to_center - optimal_radius)
-        reward_for_path_following = np.exp(-distance_error)  
-        reward += np.mean(reward_for_path_following) * 15.0  
-
-        if not collision_indices:
-            reward -= 200.0 * len(collision_indices)
-            # done = True  # end if collision
-
-        # 6) compute alignment/cost
-        psi = compute_swarm_alignment(self.headings)
-        sum_forces = np.sum(np.linalg.norm(forces, axis=1))
-        time_progress = self.steps / float(num_steps * 2)
-        cost_step = (
-            cost_w1 * (1 - psi)**2
-            + cost_w2 * time_progress
-            + cost_w3 * sum_forces
-        )
-        reward -= cost_step
-        reward += 5.0 * psi
-
-        # Calculate a proximity penalty for each robot
-        proximity_penalty = 0.0
+        # 2. Obstacle avoidance cost: increase the weight so that obstacles are strongly repulsive.
+        #    (Here we suggest increasing cost_w_obs; for example, try 10.0 instead of 1.0.)
+        collision_cost = 0.0
+        safe_distance = sensor_detection_distance / 2.0
         for pos in self.positions:
             for obs in self.obstacles:
-                dist_to_obs = np.linalg.norm(pos - obs["position"]) - obs["radius"]
-                safe_distance = sensor_detection_distance * 0.5  # for example
-                if dist_to_obs < safe_distance:
-                    # Penalize more as the robot gets closer to the obstacle
-                    proximity_penalty += np.exp(-dist_to_obs)
-        reward -= proximity_penalty * 200  # obstacle_penalty_weight to tune
+                obs_dist = np.linalg.norm(pos - obs["position"]) - obs["radius"]
+                if obs_dist < safe_distance:
+                    collision_cost += cost_w_obs * np.exp(-obs_dist)
 
+        # 3. Control effort cost: as before.
+        sum_force = np.sum(np.linalg.norm(forces, axis=1))
+        control_cost = cost_w_force * sum_force
 
-        # path progress & completion bonus
-        angle_progress = abs(self.current_angle_accum) - self.last_angle_accum
-        if angle_progress > 0:
-            reward += 1.0 * angle_progress
-        self.last_angle_accum = abs(self.current_angle_accum)
+        # 4. Crash penalty: large penalty if any collisions occur.
+        crash_penalty = 0.0
+        if collision_indices:
+            crash_penalty = 1000.0 * len(collision_indices)  # adjust if necessary
 
-        # if abs(self.current_angle_accum) >= self.max_angle:
-        #     reward += 500.0
-        #     done = True
+        # Combine costs.
+        cost_step = cohesion_cost + collision_cost + control_cost + crash_penalty
 
+        # Since PPO maximizes rewards, we set reward as negative cost.
+        reward = -cost_step
+
+        # (Optional) You can remove any extra bonuses (e.g. progress bonus) since they are less important.
+        
+        # Termination conditions (as before).
+        done = False
+        truncated = False
+        if abs(self.current_angle_accum) >= self.max_angle:
+            done = True
         self.steps += 1
         if self.steps >= (num_steps * 4):
             truncated = True
@@ -266,6 +229,7 @@ class SwarmEnv(gym.Env):
         obs = self._get_obs()
         info = {}
         return obs, reward, done, truncated, info
+
 
     def render(self, mode='rgb_array'):
         return np.zeros((512,512,3), dtype=np.uint8)

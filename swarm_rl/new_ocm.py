@@ -8,9 +8,8 @@ import matplotlib.animation as animation
 formation_type = "circle"  # "circle" or "triangle"
 
 num_robots = 15
-num_steps = 400
+num_steps = 800
 
-# Robot radius in meters
 robot_max_speed = 0.3
 robot_radius = 0.05
 robot_diameter = 2 * robot_radius
@@ -21,60 +20,60 @@ sensor_detection_distance = robot_diameter * 40
 sensor_buffer_radius = robot_diameter * 10
 object_sensor_buffer_radius = robot_diameter * 5
 
-# Baseline repulsion strengths
+# alpha_base = 0.05    # repulsion for robots to avoid collisions
+# beta_base = 0.77     # repulsion from obstacles
 alpha_base = 0.4    # repulsion for robots to avoid collisions
 beta_base = 0.4     # repulsion from obstacles
 
-# For circle formation
 formation_radius_base = num_robots // 5
-
-# For triangle formation
 formation_size_triangle_base = num_robots // 10
 
-# We'll keep K_base and C_base for alignment & cohesion
 K_base = 0.8  # Base alignment strength
 C_base = 0.7  # Base cohesion strength
-K_min, K_max = 0.005, 0.995  # Range for alignment strength
-C_min, C_max = 0.005, 0.995  # Range for cohesion strength
+# K_base = 0.08  # Base alignment strength
+# C_base = 0.41  # Base cohesion strength
+K_min, K_max = 0.005, 0.995
+C_min, C_max = 0.005, 0.995
 
-# Arrays to store K and C values over time
 K_values_over_time = []
 C_values_over_time = []
 alpha_values_over_time = []
 beta_values_over_time = []
 
-# Smoothing factors
 lambda_K = 0.7
 lambda_C = 0.5
 
-# World
 world_width = num_robots * 4
 world_boundary_tolerance = robot_diameter * 5
 
 # Obstacle Parameters
-obstacle_level = 4
+obstacle_level = 2
 num_obstacles = 3
 min_obstacle_size = world_width / 50
 max_obstacle_size = world_width / 25
 offset_degrees = 50
 passage_width = world_width / 15
 
-# Circle center
+# Circle path
 circle_center = np.array([world_width / 2, world_width / 2])
 circle_radius = world_width / 4
 
-# ---------------------------------------------
-# Cost Function Parameters
-# ---------------------------------------------
-cost_w1 = 0.006   # alignment error
-cost_w2 = 6       # rise time squared
-cost_w3 = 0.07    # control effort
-psi_threshold = 0.6
+# ------------------------------------------------------
+# New Cost Function Weights (instead of old cost_w1, etc.)
+# ------------------------------------------------------
+# For Heuristic Cost Function:
+# cost_w_path  = 0.02   # weight for path-tracking error
+# cost_w_obs   = 1.0    # weight for obstacle proximity penalty
+# cost_w_align = 0.05   # weight for swarm alignment
+# cost_w_force = 0.005  # weight for control effort
+# For RL Cost Function:
+cost_w_path  = 0.05   # weight for path-tracking error
+cost_w_obs   = 10.0    # weight for obstacle proximity penalty
+cost_w_align = 0.05   # weight for swarm alignment
+cost_w_force = 0.005  # weight for control effort
 
-# Global variables for cost accumulation
+# Track total cost over the entire simulation
 total_cost = 0.0
-t_rise = num_steps
-t_rise_recorded = False
 
 # ---------------------------------------------
 # Helper Functions
@@ -143,14 +142,12 @@ def get_moving_center(frame, total_frames, swarm_positions):
     adjusted_center = circle_center + circle_radius * np.array([np.cos(moving_theta), np.sin(moving_theta)])
     return adjusted_center
 
-
 def get_target_positions(moving_center, num_robots, formation_radius):
     angles = np.linspace(0, 2 * np.pi, num_robots, endpoint=False)
     return np.array([
         moving_center + formation_radius * np.array([np.cos(angle), np.sin(angle)])
         for angle in angles
     ])
-
 
 # ---------------------------------------------
 # Triangle Formation
@@ -221,16 +218,10 @@ def get_target_positions_triangle(moving_center, num_robots, formation_size):
     rotated_positions = positions_relative @ rotation_matrix.T
     return rotated_positions + moving_center
 
-
 # ---------------------------------------------
 # Sensor / Avoidance
 # ---------------------------------------------
 def raycast_sensor(position, heading, sensor_angle, obstacles, sensor_detection_distance):
-    """
-    Raycast from `position` in direction `heading + sensor_angle`.
-    Returns the distance to the first obstacle intersection found,
-    and a vector from the obstacle to the robot (for reference if needed).
-    """
     sensor_direction = np.array([np.cos(heading + sensor_angle), np.sin(heading + sensor_angle)])
     sensor_start = position
     min_distance = sensor_detection_distance
@@ -259,20 +250,14 @@ def raycast_sensor(position, heading, sensor_angle, obstacles, sensor_detection_
 
     return min_distance, repulsion_vector
 
-
 def smooth_transition_with_bounds(current_value, target_value, smoothing_factor, value_min, value_max):
     new_value = current_value + smoothing_factor * (target_value - current_value)
     new_value = np.clip(new_value, value_min, value_max)
-
     if abs(new_value - target_value) < 0.005:
         new_value = target_value
     return new_value
 
-
 def adjust_alignment_cohesion_gradual(current_K, current_C, center_dist):
-    """
-    Adjust K and C based on how close the nearest obstacle is.
-    """
     if center_dist < sensor_detection_distance:
         target_K = max(K_min, current_K * (center_dist / sensor_detection_distance))
         target_C = max(C_min, current_C * (center_dist / sensor_detection_distance))
@@ -283,7 +268,6 @@ def adjust_alignment_cohesion_gradual(current_K, current_C, center_dist):
     new_K = smooth_transition_with_bounds(current_K, target_K, lambda_K, K_min, K_max)
     new_C = smooth_transition_with_bounds(current_C, target_C, lambda_C, C_min, C_max)
     return new_K, new_C
-
 
 # ---------------------------------------------
 # Adaptation of formation, alpha, beta
@@ -338,43 +322,30 @@ def adapt_parameters(positions, obstacles, base_formation_radius, base_formation
 
     return (new_formation_radius, new_formation_size_triangle, new_alpha, new_beta)
 
-
 # ---------------------------------------------
 # Force Computation (with 3 sensors & side logic)
 # ---------------------------------------------
 def compute_forces_with_sensors(positions, headings, velocities, target_positions,
                                 obstacles, current_K, current_C, alpha, beta):
-    """
-    Each robot uses 3 sensors: left (+30°), center (0°), right (-30°).
-    - If left sensor sees obstacle => push to the right
-    - If right sensor sees obstacle => push to the left
-    - If center sensor sees obstacle => choose side with more space
-    """
     num_robots = len(positions)
     forces = np.zeros((num_robots, 2))
 
-    # sensor angles: left, center, right
     left_angle = np.radians(30)
     center_angle = 0.0
     right_angle = np.radians(-30)
 
     for i in range(num_robots):
-        # Basic forces
         alignment_force = np.zeros(2)
         cohesion_force = target_positions[i] - positions[i]
         robot_repulsion_force = np.zeros(2)
 
-        # Grab headings for left/right
         heading_dir = np.array([np.cos(headings[i]), np.sin(headings[i])])
-        # left_dir: +90 deg rotation of heading_dir
-        left_dir = np.array([-heading_dir[1], heading_dir[0]])
-        # right_dir: -90 deg rotation of heading_dir
-        right_dir = np.array([heading_dir[1], -heading_dir[0]])
+        left_dir   = np.array([-heading_dir[1],  heading_dir[0]])
+        right_dir  = np.array([ heading_dir[1], -heading_dir[0]])
 
-        # --- Raycast sensors ---
-        dist_left, _ = raycast_sensor(positions[i], headings[i], left_angle, obstacles, sensor_detection_distance)
+        dist_left, _   = raycast_sensor(positions[i], headings[i], left_angle, obstacles, sensor_detection_distance)
         dist_center, _ = raycast_sensor(positions[i], headings[i], center_angle, obstacles, sensor_detection_distance)
-        dist_right, _ = raycast_sensor(positions[i], headings[i], right_angle, obstacles, sensor_detection_distance)
+        dist_right, _  = raycast_sensor(positions[i], headings[i], right_angle, obstacles, sensor_detection_distance)
 
         # min distance used to adapt K & C
         min_distance = min(dist_left, dist_center, dist_right)
@@ -382,38 +353,21 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
         current_K = updated_K
         current_C = updated_C
 
-        # -------------------------------
-        # Build Obstacle Avoidance Force
-        # -------------------------------
-        # We can define a helper function for scaling:
         def avoidance_scale(d):
-            # If d >= sensor_detection_distance => no push
-            # otherwise scale up as it gets closer
             return beta * max(0.0, (sensor_detection_distance - d)) / sensor_detection_distance
 
         avoidance_force = np.zeros(2)
-
-        # 1) If left sensor sees an obstacle => push right
         if dist_left < sensor_detection_distance:
             avoidance_force += avoidance_scale(dist_left) * right_dir
-
-        # 2) If right sensor sees an obstacle => push left
         if dist_right < sensor_detection_distance:
             avoidance_force += avoidance_scale(dist_right) * left_dir
-
-        # 3) If center sensor sees an obstacle => choose side with more space
         if dist_center < sensor_detection_distance:
-            # If left side has more space => push left, else push right
             if dist_left > dist_right:
-                # more room on left side => move left
                 avoidance_force += avoidance_scale(dist_center) * left_dir
             else:
-                # more room on right side => move right
                 avoidance_force += avoidance_scale(dist_center) * right_dir
 
-        # -------------------------------
         # Robot-Robot Repulsion
-        # -------------------------------
         for j in range(num_robots):
             if i == j:
                 continue
@@ -423,9 +377,7 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
                 effective_distance = max(distance, 1e-4)
                 robot_repulsion_force += (direction / effective_distance) * (alpha / effective_distance)
 
-        # -------------------------------
-        # Alignment with neighbors
-        # -------------------------------
+        # Alignment
         neighbors = [
             j for j in range(num_robots)
             if i != j and np.linalg.norm(positions[i] - positions[j]) < sensor_detection_distance
@@ -437,14 +389,13 @@ def compute_forces_with_sensors(positions, headings, velocities, target_position
                 np.sin(avg_heading) - np.sin(headings[i])
             ])
 
-        # Combine everything
-        forces[i] = updated_C * cohesion_force \
-                     + avoidance_force \
-                     + updated_K * alignment_force \
-                     + robot_repulsion_force
+        # Combine Forces
+        forces[i] = (updated_C * cohesion_force
+                     + avoidance_force
+                     + updated_K * alignment_force
+                     + robot_repulsion_force)
 
     return forces, current_K, current_C
-
 
 # ---------------------------------------------
 # Collision Checking
@@ -472,7 +423,6 @@ def check_collisions(positions, obstacles):
 def enforce_boundary_conditions(positions, world_width, world_boundary_tolerance):
     return np.clip(positions, world_boundary_tolerance, world_width - world_boundary_tolerance)
 
-
 def update_positions_and_headings(positions, headings, forces, robot_max_speed, boundary_conditions):
     for i in range(len(positions)):
         velocity = forces[i]
@@ -485,16 +435,15 @@ def update_positions_and_headings(positions, headings, forces, robot_max_speed, 
     positions = enforce_boundary_conditions(positions, *boundary_conditions)
     return positions, headings
 
-
 # -------------------------------------------
-# Cost Function Computation
+# Alignment Utility
 # -------------------------------------------
 def compute_swarm_alignment(headings):
+    """Returns psi in [0..1], with 1 = perfectly aligned."""
     avg_cos = np.mean(np.cos(headings))
     avg_sin = np.mean(np.sin(headings))
     psi = np.sqrt(avg_cos**2 + avg_sin**2)
     return psi
-
 
 # -------------------------------------------
 # Main Function
@@ -524,10 +473,9 @@ def main():
         obstacle_level
     )
 
-    global total_cost, t_rise, t_rise_recorded
+    # Track total cost in the global scope
+    global total_cost
     total_cost = 0.0
-    t_rise = num_steps
-    t_rise_recorded = False
 
     # Current alignment & cohesion
     current_K = K_base
@@ -560,9 +508,9 @@ def main():
     moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
 
     def animate(frame):
-        global total_cost, t_rise, t_rise_recorded
         nonlocal positions, headings, velocities
         nonlocal formation_radius, formation_size_triangle, alpha, beta, current_K, current_C
+        global total_cost
 
         # 1) Check collisions
         updated_positions, removed_indices = check_collisions(positions, obstacles)
@@ -587,14 +535,14 @@ def main():
             alpha_base, beta_base
         )
 
-        # 3) Get target positions
+        # 3) Get target positions (the "path" we want them to follow)
         moving_center = get_moving_center(frame, num_steps, positions)
         if formation_type.lower() == "triangle":
             target_positions = get_target_positions_triangle(moving_center, len(positions), formation_size_triangle)
         else:
             target_positions = get_target_positions(moving_center, len(positions), formation_radius)
 
-        # 4) Compute forces (with new side-based sensor logic)
+        # 4) Compute forces
         forces, current_K, current_C = compute_forces_with_sensors(
             positions,
             headings,
@@ -623,23 +571,39 @@ def main():
         # 7) Update moving center marker
         moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
-        # 8) Compute swarm alignment
+        # ------------------------------------------------
+        # 8) NEW COST FUNCTION: path + collision + alignment + control effort
+        # ------------------------------------------------
+
+        # 8a) Swarm alignment cost
         psi = compute_swarm_alignment(headings)
+        alignment_cost = cost_w_align * (1.0 - psi)**2  # 0 when perfectly aligned
 
-        # Record t_rise if threshold is met for the first time
-        if (not t_rise_recorded) and (psi >= psi_threshold):
-            t_rise = frame
-            t_rise_recorded = True
+        # 8b) Path-following error: distance from each robot to its target position
+        path_errors = np.linalg.norm(positions - target_positions, axis=1)
+        avg_path_error = np.mean(path_errors) if len(path_errors) > 0 else 0.0
+        path_cost = cost_w_path * avg_path_error
 
-        # 9) Compute sum of force magnitudes
+        # 8c) Collision-avoidance cost (penalize robots that get too close to obstacles)
+        #     We'll sum an exponential penalty for each robot that's near an obstacle.
+        collision_cost = 0.0
+        safe_distance = sensor_detection_distance / 2.0  # or pick some threshold
+        for i in range(len(positions)):
+            for obs in obstacles:
+                obs_dist = np.linalg.norm(positions[i] - obs["position"]) - obs["radius"]
+                if obs_dist < safe_distance:
+                    # exponential penalty increases as the robot gets closer
+                    collision_cost += cost_w_obs * np.exp(-obs_dist)
+
+        # 8d) Control effort: sum of the magnitudes of the forces
         sum_force = np.sum(np.linalg.norm(forces, axis=1))
+        control_cost = cost_w_force * sum_force
 
-        # 10) Compute cost
-        current_t_rise = t_rise if t_rise_recorded else num_steps
-        cost_step = cost_w1 * (1 - psi)**2 + cost_w2 * (current_t_rise)**2 + cost_w3 * sum_force
+        # Combine all cost terms for this timestep
+        cost_step = alignment_cost + path_cost + collision_cost + control_cost
         total_cost += cost_step
         cost_history.append(total_cost)
-
+        
         # Record for plotting
         K_values_over_time.append(current_K)
         C_values_over_time.append(current_C)
@@ -654,7 +618,6 @@ def main():
     # End-of-run summary
     print(f"Robots left after simulation: {len(positions)}")
     print(f"Final accumulated cost: {total_cost:.2f}")
-    print(f"Rise time (first frame where psi >= {psi_threshold}): {t_rise}")
 
     # Plot K and C
     plt.figure(figsize=(10, 6))

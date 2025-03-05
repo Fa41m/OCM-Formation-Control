@@ -24,7 +24,10 @@ from new_ocmV2 import (
     # Global arrays for plotting (optional)
     K_values_over_time, C_values_over_time,
     alpha_values_over_time, beta_values_over_time,
-    total_cost
+    total_cost,
+    initialize_positions,
+    initialize_positions_triangle,
+    circle_center, circle_radius,
 )
 
 # # ---- Adjust cost function weights for RL training ----
@@ -81,11 +84,6 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         Run an offline rollout using the current policy.
         Adaptive formation parameters are computed each step.
         """
-        from new_ocm import (
-            initialize_positions,
-            initialize_positions_triangle,
-            circle_center, circle_radius
-        )
         start_position = circle_center + circle_radius * np.array([1, 0])
         if formation_type.lower() == 'triangle':
             positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle_base)
@@ -181,11 +179,6 @@ def final_offline_simulation(model):
     beta_values_over_time.clear()
     cost_history = []
 
-    from new_ocm import (
-        initialize_positions,
-        initialize_positions_triangle,
-        circle_center, circle_radius
-    )
     start_position = circle_center + circle_radius * np.array([1, 0])
     if formation_type.lower() == 'triangle':
         positions = initialize_positions_triangle(num_robots, start_position, formation_size_triangle_base)
