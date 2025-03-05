@@ -30,14 +30,6 @@ from new_ocmV2 import (
     circle_center, circle_radius,
 )
 
-# # ---- Adjust cost function weights for RL training ----
-# # (These new values are chosen to reduce the high initial reward and
-# # encourage collision avoidance by de-emphasizing path-tracking reward)
-# cost_w_path = 0.005   # lower path-tracking error weight
-# cost_w_obs  = 2.0     # higher collision penalty weight
-# cost_w_align = 0.03   # slightly lower alignment weight to allow formation deformation
-# # cost_w_force remains unchanged
-
 ###############################################################################
 # Callback for Offline Video Generation Every N Episodes
 ###############################################################################
