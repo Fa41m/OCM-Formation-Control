@@ -36,6 +36,22 @@ def update_velocities(forces, robot_max_speed):
         clipped.append(f)
     return np.array(clipped)
 
+def formation_error(positions, desired_distance):
+    # positions: shape (N, 2)
+    # desired_distance: float, e.g. 5.0
+    N = len(positions)
+    total_error = 0.0
+    count = 0
+    
+    for i in range(N):
+        for j in range(i+1, N):
+            dist = np.linalg.norm(positions[i] - positions[j])
+            total_error += abs(dist - desired_distance)
+            count += 1
+    
+    avg_error = total_error / (count if count > 0 else 1)
+    return avg_error
+
 class SwarmEnv(gym.Env):
     """
     Example environment implementing:
@@ -129,6 +145,7 @@ class SwarmEnv(gym.Env):
         swarm_center = np.mean(self.positions, axis=0)
         rel = swarm_center - self.circle_center
         self.last_angle = np.arctan2(rel[1], rel[0])
+        self.nominal_positions = np.copy(self.positions)
 
         self.steps = 0
 
@@ -144,6 +161,8 @@ class SwarmEnv(gym.Env):
             self.headings.flatten(),
             self.velocities.flatten()
         ])
+        
+    
 
     def step(self, action):
         """
@@ -183,48 +202,90 @@ class SwarmEnv(gym.Env):
         _, collision_indices = check_collisions(np.copy(self.positions), self.obstacles)
 
         # ---------------------------
-        # New Cost Function
+        # Reward Shaping
         # ---------------------------
+        reward = 0.0
         # 1. Cohesion cost: penalize agents that are far from the swarm center.
         #    (Here k_cohesion is a new parameter that you can tune.)
-        k_cohesion = 0.1  # try adjusting this value (e.g. 0.05 to 0.2)
+        k_cohesion = 0.01  # try adjusting this value (e.g. 0.05 to 0.2)
         cohesion_cost = k_cohesion * np.mean(np.linalg.norm(self.positions - swarm_center, axis=1)**2)
-
-        # 2. Obstacle avoidance cost: increase the weight so that obstacles are strongly repulsive.
-        #    (Here we suggest increasing cost_w_obs; for example, try 10.0 instead of 1.0.)
-        collision_cost = 0.0
-        safe_distance = sensor_detection_distance / 2.0
-        for pos in self.positions:
-            for obs in self.obstacles:
-                obs_dist = np.linalg.norm(pos - obs["position"]) - obs["radius"]
-                if obs_dist < safe_distance:
-                    collision_cost += cost_w_obs * np.exp(-obs_dist)
+        reward -= cohesion_cost
 
         # 3. Control effort cost: as before.
         sum_force = np.sum(np.linalg.norm(forces, axis=1))
         control_cost = cost_w_force * sum_force
+        reward -= control_cost
 
-        # 4. Crash penalty: large penalty if any collisions occur.
-        crash_penalty = 0.0
         if collision_indices:
-            crash_penalty = 1000.0 * len(collision_indices)  # adjust if necessary
+            reward -= 300.0 * len(collision_indices)  # adjust if necessary
+            
+            
+        distances_to_center = np.linalg.norm(self.positions - self.circle_center, axis=1)
+        min_allowed_radius = self.circle_radius * 0.5
+        too_close_mask = distances_to_center < min_allowed_radius
+        penalty_for_cutting = 10.0
+        if np.any(too_close_mask):
+            reward -= penalty_for_cutting * np.sum(too_close_mask)
 
-        # Combine costs.
-        cost_step = cohesion_cost + collision_cost + control_cost + crash_penalty
 
-        # Since PPO maximizes rewards, we set reward as negative cost.
-        reward = -cost_step
+        # Reward for staying on the path:
+        optimal_radius = self.circle_radius
+        distance_error = np.abs(distances_to_center - optimal_radius)
+        reward_for_path_following = np.exp(-distance_error)  
+        reward += np.mean(reward_for_path_following)  
 
-        # (Optional) You can remove any extra bonuses (e.g. progress bonus) since they are less important.
+
+        # Calculate a proximity penalty for each robot (penalize closeness to obstacles):
+        proximity_penalty = 0.0
+        any_near_obstacle = False
+        for pos in self.positions:
+            for obs in self.obstacles:
+                dist_to_obs = np.linalg.norm(pos - obs["position"]) - obs["radius"]
+                if dist_to_obs < 2.0:  # or sensor_detection_distance * 0.5
+                    any_near_obstacle = True
+                if dist_to_obs < 1.0:
+                    # the closer we get, the bigger the penalty
+                    proximity_penalty += np.exp(-dist_to_obs)
+
+        reward -= 30.0 * proximity_penalty
+
+        # 3) Add a small formation bonus only if not near obstacles
+        if not any_near_obstacle:
+            # Suppose desired inter-robot distance is 5.0
+            f_err = formation_error(self.positions, 5.0)
+            f_good = np.exp(-f_err)  # 1.0 if perfect, decays with error
+            reward += 0.5 * f_good  # small bonus, overshadowed by collision penalty if any
         
+        distances = np.linalg.norm(self.positions - self.nominal_positions, axis=1)
+
+        # # 3) If a robot is “close enough” to its target, count it:
+        # formation_tolerance = 2.0  # tune this
+        # in_formation_mask = distances < formation_tolerance
+        # in_formation_count = np.sum(in_formation_mask)
+
+        # # 4) Check if at least 60% of the swarm is in formation:
+        # fraction_in_formation = in_formation_count / num_robots
+        # if fraction_in_formation >= 0.60:
+        #     # You can pick any reward bonus you like—here we add +10 as an example
+        #     reward += 10.0
+
         # Termination conditions (as before).
         done = False
         truncated = False
+        # Path progress & completion bonus:
+        angle_progress = abs(self.current_angle_accum) - self.last_angle_accum
+        if angle_progress > 0:
+            reward += 1.0 * angle_progress
+        self.last_angle_accum = abs(self.current_angle_accum)
+
         if abs(self.current_angle_accum) >= self.max_angle:
+            reward += 500.0
             done = True
+
         self.steps += 1
+        
         if self.steps >= (num_steps * 4):
-            truncated = True
+            truncated = True  # Even if you don't use it, return it
 
         obs = self._get_obs()
         info = {}

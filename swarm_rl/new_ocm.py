@@ -47,7 +47,7 @@ world_width = num_robots * 4
 world_boundary_tolerance = robot_diameter * 5
 
 # Obstacle Parameters
-obstacle_level = 2
+obstacle_level = 1
 num_obstacles = 3
 min_obstacle_size = world_width / 50
 max_obstacle_size = world_width / 25

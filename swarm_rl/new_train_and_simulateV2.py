@@ -204,6 +204,8 @@ def final_offline_simulation(model):
         nonlocal positions, headings, velocities, alpha, beta, current_K, current_C
         global total_cost
 
+        max_frames = num_steps*4
+        local_step = 0
         updated_positions, removed_indices = check_collisions(positions, obstacles)
         if removed_indices:
             headings = np.delete(headings, removed_indices, axis=0)
@@ -274,7 +276,7 @@ def final_offline_simulation(model):
         beta_values_over_time.append(beta)
         return scatter,
 
-    ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=50, repeat=False)
+    ani = animation.FuncAnimation(fig, animate, frames=num_steps*4, interval=50, repeat=False)
     plt.show()
 
     print(f"Robots left after simulation: {len(positions)}")
@@ -337,7 +339,7 @@ def main():
 
     last_ep = len(video_callback.episode_rewards)
     last_reward = video_callback.episode_rewards[-1] if last_ep > 0 else 0.0
-    final_video = os.path.join("./videos", f"final_offline_run_ep{last_ep}.mp4")
+    final_video = os.path.join(save_path, f"final_offline_run_ep{last_ep}.mp4")
     print(f"Generating final offline playback for ep {last_ep} ...")
     video_callback.offline_playback(model, final_video, last_ep, last_reward)
 

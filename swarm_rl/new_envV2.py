@@ -258,18 +258,20 @@ class SwarmEnv(gym.Env):
         
         distances = np.linalg.norm(self.positions - self.nominal_positions, axis=1)
 
-        # 3) If a robot is “close enough” to its target, count it:
+        # # 3) If a robot is “close enough” to its target, count it:
         # formation_tolerance = 2.0  # tune this
         # in_formation_mask = distances < formation_tolerance
         # in_formation_count = np.sum(in_formation_mask)
 
-        # 4) Check if at least 60% of the swarm is in formation:
+        # # 4) Check if at least 60% of the swarm is in formation:
         # fraction_in_formation = in_formation_count / num_robots
         # if fraction_in_formation >= 0.60:
         #     # You can pick any reward bonus you like—here we add +10 as an example
         #     reward += 10.0
 
-
+        # Termination conditions (as before).
+        done = False
+        truncated = False
         # Path progress & completion bonus:
         angle_progress = abs(self.current_angle_accum) - self.last_angle_accum
         if angle_progress > 0:
@@ -280,11 +282,9 @@ class SwarmEnv(gym.Env):
             reward += 500.0
             done = True
 
-        # Termination conditions (as before).
-        done = False
+        # # Termination conditions (as before).
+        # done = False
         truncated = False
-        if abs(self.current_angle_accum) >= self.max_angle:
-            done = True
         self.steps += 1
         if self.steps >= (num_steps * 4):
             truncated = True
