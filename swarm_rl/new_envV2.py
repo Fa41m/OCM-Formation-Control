@@ -36,6 +36,22 @@ def update_velocities(forces, robot_max_speed):
         clipped.append(f)
     return np.array(clipped)
 
+def formation_error(positions, desired_distance):
+    # positions: shape (N, 2)
+    # desired_distance: float, e.g. 5.0
+    N = len(positions)
+    total_error = 0.0
+    count = 0
+    
+    for i in range(N):
+        for j in range(i+1, N):
+            dist = np.linalg.norm(positions[i] - positions[j])
+            total_error += abs(dist - desired_distance)
+            count += 1
+    
+    avg_error = total_error / (count if count > 0 else 1)
+    return avg_error
+
 class SwarmEnv(gym.Env):
     """
     Example environment implementing:
@@ -145,6 +161,8 @@ class SwarmEnv(gym.Env):
             self.headings.flatten(),
             self.velocities.flatten()
         ])
+        
+    
 
     def step(self, action):
         """
@@ -201,6 +219,7 @@ class SwarmEnv(gym.Env):
         if collision_indices:
             reward -= 300.0 * len(collision_indices)  # adjust if necessary
             
+            
         distances_to_center = np.linalg.norm(self.positions - self.circle_center, axis=1)
         min_allowed_radius = self.circle_radius * 0.5
         too_close_mask = distances_to_center < min_allowed_radius
@@ -218,14 +237,24 @@ class SwarmEnv(gym.Env):
 
         # Calculate a proximity penalty for each robot (penalize closeness to obstacles):
         proximity_penalty = 0.0
+        any_near_obstacle = False
         for pos in self.positions:
             for obs in self.obstacles:
                 dist_to_obs = np.linalg.norm(pos - obs["position"]) - obs["radius"]
-                safe_distance = sensor_detection_distance * 0.5  # or another threshold
-                if dist_to_obs < safe_distance:
-                    # Penalize more as the robot gets closer to the obstacle
+                if dist_to_obs < 2.0:  # or sensor_detection_distance * 0.5
+                    any_near_obstacle = True
+                if dist_to_obs < 1.0:
+                    # the closer we get, the bigger the penalty
                     proximity_penalty += np.exp(-dist_to_obs)
-        reward -= proximity_penalty * 30  # "obstacle_penalty_weight" to tune
+
+        reward -= 30.0 * proximity_penalty
+
+        # 3) Add a small formation bonus only if not near obstacles
+        if not any_near_obstacle:
+            # Suppose desired inter-robot distance is 5.0
+            f_err = formation_error(self.positions, 5.0)
+            f_good = np.exp(-f_err)  # 1.0 if perfect, decays with error
+            reward += 0.5 * f_good  # small bonus, overshadowed by collision penalty if any
         
         distances = np.linalg.norm(self.positions - self.nominal_positions, axis=1)
 

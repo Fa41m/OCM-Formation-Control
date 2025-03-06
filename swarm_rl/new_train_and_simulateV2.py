@@ -27,7 +27,7 @@ from new_ocmV2 import (
     total_cost,
     initialize_positions,
     initialize_positions_triangle,
-    circle_center, circle_radius,
+    circle_center, circle_radius, obstacle_level,
 )
 
 ###############################################################################
@@ -106,8 +106,8 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         # Initialize RL parameters to base values (can be adjusted if needed)
         alpha = cost_w_align  
         beta = cost_w_obs
-        current_K = 0.8
-        current_C = 0.7
+        current_K = K_base
+        current_C = C_base
 
         def animate(_frame):
             nonlocal positions, headings, velocities, local_step, alpha, beta, current_K, current_C
@@ -317,8 +317,11 @@ def main():
       - Saves the trained model and generates a final offline simulation.
     """
     vec_env = make_vec_env(lambda: SwarmEnv(seed_value=42), n_envs=1)
-    model = PPO("MlpPolicy", vec_env, verbose=1)
-    video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path="./videos", log_path="./episode_rewards_log.txt")
+    model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
+    level = f"Level{obstacle_level}"  # Change this to the appropriate level as needed
+    save_path = f"./videos/{level}"
+    log_path = os.path.join(save_path, "episode_rewards_log.txt")
+    video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path=save_path, log_path=log_path)
 
     # Clean existing logs and videos if desired
     if os.path.exists(video_callback.save_path):
