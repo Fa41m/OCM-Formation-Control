@@ -11,22 +11,27 @@ num_robots = 15
 num_steps = 800
 
 robot_max_speed = 0.3
+# Measured in meters, but the scale is arbitrary
 robot_radius = 0.05
 robot_diameter = 2 * robot_radius
-robot_collision_zone = (2 * robot_radius)
+robot_collision_zone = max(2 * robot_radius, 0.1)  # Avoid disappearing robots4
+
+def log_scale(x, a=5, b=1):
+    """Logarithmic scaling to keep values growing at a controlled rate."""
+    return a * np.log(b * x + 1)
+
 
 # Robot Sensor Parameters
-sensor_detection_distance = robot_diameter * 40
-sensor_buffer_radius = robot_diameter * 10
-object_sensor_buffer_radius = robot_diameter * 5
+sensor_detection_distance = log_scale(num_robots, 10, 0.5) * robot_diameter
+sensor_buffer_radius = log_scale(num_robots, 3, 0.2) * robot_diameter
 
 # alpha_base = 0.05    # repulsion for robots to avoid collisions
 # beta_base = 0.77     # repulsion from obstacles
 alpha_base = 0.4    # repulsion for robots to avoid collisions
 beta_base = 0.4     # repulsion from obstacles
 
-formation_radius_base = num_robots // 5
-formation_size_triangle_base = num_robots // 10
+formation_radius_base = log_scale(num_robots, 8, 0.6) * robot_diameter
+formation_size_triangle_base = log_scale(num_robots, 4, 0.5) * robot_diameter
 
 K_base = 0.8  # Base alignment strength
 C_base = 0.7  # Base cohesion strength
@@ -44,15 +49,15 @@ lambda_K = 0.7
 lambda_C = 0.5
 
 world_width = num_robots * 4
-world_boundary_tolerance = robot_diameter * 5
+world_boundary_tolerance = 0.5
 
 # Obstacle Parameters
-obstacle_level = 1
+obstacle_level = 4
 num_obstacles = 3
-min_obstacle_size = world_width / 50
-max_obstacle_size = world_width / 25
+min_obstacle_size = min(log_scale(num_robots, 5, 0.35) * robot_diameter, 2.5)
+max_obstacle_size = min(log_scale(num_robots, 7, 0.35) * robot_diameter, 4.5)
 offset_degrees = 50
-passage_width = world_width / 15
+passage_width = log_scale(num_robots, 15, 0.45) * robot_diameter
 
 # Circle path
 circle_center = np.array([world_width / 2, world_width / 2])
@@ -237,10 +242,10 @@ def raycast_sensor(position, heading, sensor_angle, obstacles, sensor_detection_
         if 0 < projection_length < sensor_detection_distance:
             closest_point = sensor_start + projection_length * sensor_direction
             distance_to_obstacle = np.linalg.norm(closest_point - obs_pos)
-            if distance_to_obstacle <= obs_radius + object_sensor_buffer_radius:
+            if distance_to_obstacle <= obs_radius + sensor_buffer_radius:
                 intersection_distance = (
                     projection_length -
-                    np.sqrt((obs_radius + object_sensor_buffer_radius)**2 - distance_to_obstacle**2)
+                    np.sqrt((obs_radius + sensor_buffer_radius)**2 - distance_to_obstacle**2)
                 )
                 if 0 < intersection_distance < min_distance:
                     min_distance = intersection_distance
@@ -492,7 +497,7 @@ def main():
     # Outline circle
     ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
 
-    scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue')
+    scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
     ax.set_xlim(0, world_width)
     ax.set_ylim(0, world_width)
     ax.set_aspect('equal')

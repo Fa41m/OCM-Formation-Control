@@ -12,7 +12,7 @@ from new_env import SwarmEnv
 
 # Import needed functions and constants from new_ocm
 from new_ocm import (
-    num_steps, world_width, world_boundary_tolerance, robot_max_speed,
+    num_steps, world_width, world_boundary_tolerance, robot_max_speed, robot_diameter,
     num_robots, num_obstacles, min_obstacle_size, max_obstacle_size, sensor_detection_distance,
     offset_degrees, passage_width, obstacle_level,
     formation_radius_base, formation_size_triangle_base, formation_type,
@@ -90,7 +90,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         )
 
         fig, ax = plt.subplots()
-        scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
+        scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
         ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
         for obs in obstacles:
             if obs["type"] == "circle":
@@ -108,7 +108,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         beta = cost_w_obs
         current_K = K_base
         current_C = C_base
-
+        moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
         def animate(_frame):
             nonlocal positions, headings, velocities, local_step, alpha, beta, current_K, current_C
 
@@ -126,6 +126,8 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
                 t_positions = get_target_positions_triangle(moving_center, len(positions), new_fst)
             else:
                 t_positions = get_target_positions(moving_center, len(positions), new_fr)
+                
+            moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
             forces, updated_K, updated_C = compute_forces_with_sensors(
                 positions, headings, velocities,
@@ -148,7 +150,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
             local_step += 1
             if local_step >= max_frames or len(positions) == 0:
                 plt.close(fig)
-            return scatter,
+            return scatter, moving_center_marker
 
         ani = animation.FuncAnimation(fig, animate, frames=max_frames, interval=50, blit=False, repeat=False)
         ani.save(filename, writer="ffmpeg")
@@ -185,7 +187,7 @@ def final_offline_simulation(model):
     )
 
     fig, ax = plt.subplots()
-    scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue')
+    scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
     ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
     for obs in obstacles:
         if obs["type"] == "circle":
@@ -200,6 +202,8 @@ def final_offline_simulation(model):
     current_K = K_base
     current_C = C_base
 
+    moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
+    
     def animate(frame):
         nonlocal positions, headings, velocities, alpha, beta, current_K, current_C
         global total_cost
@@ -248,6 +252,8 @@ def final_offline_simulation(model):
 
         scatter.set_offsets(positions)
         count_text.set_text(f"Robots remaining: {len(positions)}")
+        
+        moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
         # Compute cost for logging
         psi = compute_swarm_alignment(headings)
@@ -272,7 +278,7 @@ def final_offline_simulation(model):
         C_values_over_time.append(current_C)
         alpha_values_over_time.append(alpha)
         beta_values_over_time.append(beta)
-        return scatter,
+        return scatter, moving_center_marker
 
     ani = animation.FuncAnimation(fig, animate, frames=num_steps*4, interval=50, repeat=False)
     plt.show()
@@ -331,7 +337,7 @@ def main():
         os.remove(video_callback.log_path)
 
     print("Training the PPO model...")
-    model.learn(total_timesteps=100000, callback=video_callback)
+    model.learn(total_timesteps=400000, callback=video_callback)
     model.save("swarm_navigation_policy")
     print("Training complete. Model saved as 'swarm_navigation_policy'.")
 

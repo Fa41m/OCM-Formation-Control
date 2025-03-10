@@ -641,8 +641,8 @@ def run_simulation(alpha, beta, K, C, do_plot=False):
     return total_cost
 
 def pso_optimize(
-    n_particles=20,      # Increased number of particles for better exploration
-    n_iterations=4,     # Increased number of iterations for refined solutions
+    n_particles=25,      # Increased number of particles for better exploration
+    n_iterations=10,     # Increased number of iterations for refined solutions
     alpha_bounds=(0.1, 1.0),
     beta_bounds=(0.1, 1.0),
     K_bounds=(0.1, 0.99),
