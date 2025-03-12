@@ -60,7 +60,7 @@ class SwarmEnv(gym.Env):
       (3) Path completion (4 laps) bonus + partial progress reward
     """
 
-    def __init__(self, seed_value=42):
+    def __init__(self, num_robots, obstacle_level, seed_value=42):
         super().__init__()
 
         # -------------------------------
@@ -69,6 +69,8 @@ class SwarmEnv(gym.Env):
         # alpha,beta in [0,1], K,C in [0.005,0.995], etc.
         # Formation radius is fixed internally, not learned.
         # -------------------------------
+        self.num_robots = num_robots
+        self.obstacle_level = obstacle_level
         self.formation_type = formation_type
         if formation_type.lower() == 'triangle':
             self.formation_base = formation_size_triangle_base

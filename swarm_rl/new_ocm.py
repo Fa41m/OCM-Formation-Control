@@ -9,6 +9,7 @@ formation_type = "circle"  # "circle" or "triangle"
 
 num_robots = 15
 num_steps = 800
+total_steps = num_steps * 2
 
 robot_max_speed = 0.3
 # Measured in meters, but the scale is arbitrary
@@ -52,7 +53,7 @@ world_width = num_robots * 4
 world_boundary_tolerance = 0.5
 
 # Obstacle Parameters
-obstacle_level = 4
+obstacle_level = 2
 num_obstacles = 3
 min_obstacle_size = min(log_scale(num_robots, 5, 0.35) * robot_diameter, 2.5)
 max_obstacle_size = min(log_scale(num_robots, 7, 0.35) * robot_diameter, 4.5)
@@ -617,7 +618,7 @@ def main():
 
         return scatter, moving_center_marker
 
-    ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
+    ani = animation.FuncAnimation(fig, animate, frames=total_steps, interval=100, repeat=False)
     plt.show()
 
     # End-of-run summary
