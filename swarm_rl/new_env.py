@@ -60,7 +60,7 @@ class SwarmEnv(gym.Env):
       (3) Path completion (4 laps) bonus + partial progress reward
     """
 
-    def __init__(self, num_robots, obstacle_level, seed_value=42):
+    def __init__(self, seed_value=42):
         super().__init__()
 
         # -------------------------------
@@ -69,8 +69,6 @@ class SwarmEnv(gym.Env):
         # alpha,beta in [0,1], K,C in [0.005,0.995], etc.
         # Formation radius is fixed internally, not learned.
         # -------------------------------
-        self.num_robots = num_robots
-        self.obstacle_level = obstacle_level
         self.formation_type = formation_type
         if formation_type.lower() == 'triangle':
             self.formation_base = formation_size_triangle_base
@@ -207,87 +205,81 @@ class SwarmEnv(gym.Env):
         # Reward Shaping
         # ---------------------------
         reward = 0.0
+
         # 1. Cohesion cost: penalize agents that are far from the swarm center.
-        #    (Here k_cohesion is a new parameter that you can tune.)
-        k_cohesion = 0.01  # try adjusting this value (e.g. 0.05 to 0.2)
+        k_cohesion = 0.01  # Tune this parameter as needed
         cohesion_cost = k_cohesion * np.mean(np.linalg.norm(self.positions - swarm_center, axis=1)**2)
         reward -= cohesion_cost
 
-        # 3. Control effort cost: as before.
+        # 2. Control effort cost: discourage excessive force usage.
         sum_force = np.sum(np.linalg.norm(forces, axis=1))
         control_cost = cost_w_force * sum_force
         reward -= control_cost
 
+        # 3. Collision penalty: heavy penalty for every collision.
         if collision_indices:
-            reward -= 300.0 * len(collision_indices)  # adjust if necessary
-            
-            
+            reward -= 300.0 * len(collision_indices)
+
+        # 4. Path-following reward: encourage robots to stay close to the desired circular path.
+        #    Normalize the distance error by the circle radius.
         distances_to_center = np.linalg.norm(self.positions - self.circle_center, axis=1)
-        min_allowed_radius = self.circle_radius * 0.5
+        optimal_radius = self.circle_radius
+        normalized_distance_error = np.abs(distances_to_center - optimal_radius) / optimal_radius
+        # Reward gets close to 1 if error is near zero.
+        reward_for_path_following = np.exp(-normalized_distance_error)
+        reward += np.mean(reward_for_path_following)
+
+        # 5. Penalty for cutting corners: if agents get too close to the center (i.e. "cutting the path").
+        min_allowed_radius = 0.5 * self.circle_radius
         too_close_mask = distances_to_center < min_allowed_radius
         penalty_for_cutting = 10.0
         if np.any(too_close_mask):
-            reward -= penalty_for_cutting * np.sum(too_close_mask)
+            # Normalize by the number of robots so the penalty scales with swarm size.
+            reward -= penalty_for_cutting * (np.sum(too_close_mask) / len(self.positions))
 
-
-        # Reward for staying on the path:
-        optimal_radius = self.circle_radius
-        distance_error = np.abs(distances_to_center - optimal_radius)
-        reward_for_path_following = np.exp(-distance_error)  
-        reward += np.mean(reward_for_path_following)  
-
-
-        # Calculate a proximity penalty for each robot (penalize closeness to obstacles):
+        # 6. Obstacle avoidance penalty: continuously penalize closeness to obstacles.
+        obstacle_penalty_weight = 30.0
         proximity_penalty = 0.0
-        any_near_obstacle = False
         for pos in self.positions:
             for obs in self.obstacles:
+                # Calculate clearance from obstacle surface.
                 dist_to_obs = np.linalg.norm(pos - obs["position"]) - obs["radius"]
-                if dist_to_obs < 2.0:  # or sensor_detection_distance * 0.5
-                    any_near_obstacle = True
-                if dist_to_obs < 1.0:
-                    # the closer we get, the bigger the penalty
+                # Apply a smooth exponential penalty if within a threshold distance.
+                threshold = 2.0  # Adjust this threshold if needed.
+                if dist_to_obs < threshold:
                     proximity_penalty += np.exp(-dist_to_obs)
+        # Average the penalty over the number of robots.
+        reward -= obstacle_penalty_weight * (proximity_penalty / len(self.positions))
 
-        reward -= 30.0 * proximity_penalty
+        # 7. Formation bonus: reward maintaining the desired formation when not in close proximity to obstacles.
+        #    The formation error is computed externally (for example, average deviation from a desired inter-robot distance).
+        #    This term is added only if agents are not near any obstacles.
+        if proximity_penalty < 1e-3:  # You may adjust the threshold to define "safe" from obstacles.
+            desired_inter_robot_distance = 5.0  # Tune as necessary.
+            f_err = formation_error(self.positions, desired_inter_robot_distance)
+            formation_bonus = np.exp(-f_err)  # Closer to 1 when formation is ideal.
+            formation_bonus_weight = 0.5
+            reward += formation_bonus_weight * formation_bonus
 
-        # 3) Add a small formation bonus only if not near obstacles
-        if not any_near_obstacle:
-            # Suppose desired inter-robot distance is 5.0
-            f_err = formation_error(self.positions, 5.0)
-            f_good = np.exp(-f_err)  # 1.0 if perfect, decays with error
-            reward += 0.5 * f_good  # small bonus, overshadowed by collision penalty if any
-        
-        distances = np.linalg.norm(self.positions - self.nominal_positions, axis=1)
-
-        # # 3) If a robot is “close enough” to its target, count it:
-        # formation_tolerance = 2.0  # tune this
-        # in_formation_mask = distances < formation_tolerance
-        # in_formation_count = np.sum(in_formation_mask)
-
-        # # 4) Check if at least 60% of the swarm is in formation:
-        # fraction_in_formation = in_formation_count / num_robots
-        # if fraction_in_formation >= 0.60:
-        #     # You can pick any reward bonus you like—here we add +10 as an example
-        #     reward += 10.0
-
-        # Termination conditions (as before).
-        done = False
-        truncated = False
-        # Path progress & completion bonus:
+        # 8. Progress reward: reward for making progress along the circular path.
         angle_progress = abs(self.current_angle_accum) - self.last_angle_accum
         if angle_progress > 0:
-            reward += 1.0 * angle_progress
+            progress_reward_weight = 1.0
+            reward += progress_reward_weight * angle_progress
         self.last_angle_accum = abs(self.current_angle_accum)
-
+        
+        done = False
+        # 9. Termination bonus: provide a bonus upon full path completion.
         if abs(self.current_angle_accum) >= self.max_angle:
-            reward += 500.0
+            # reward += 500.0
             done = True
 
+        # # Termination conditions (as before).
+        # done = False
+        truncated = False
         self.steps += 1
-        
         if self.steps >= (num_steps * 4):
-            truncated = True  # Even if you don't use it, return it
+            truncated = True
 
         obs = self._get_obs()
         info = {}

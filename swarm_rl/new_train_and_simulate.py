@@ -12,7 +12,7 @@ from new_env import SwarmEnv
 
 # Import needed functions and constants from new_ocm
 from new_ocm import (
-    num_steps, world_width, world_boundary_tolerance, robot_max_speed, robot_diameter,
+    num_steps, world_width, world_boundary_tolerance, robot_max_speed,
     num_robots, num_obstacles, min_obstacle_size, max_obstacle_size, sensor_detection_distance,
     offset_degrees, passage_width, obstacle_level,
     formation_radius_base, formation_size_triangle_base, formation_type,
@@ -65,7 +65,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
 
             if (self.episode_count % self.video_episode_freq) == 0:
                 last_ep_reward = self.episode_rewards[-1] if self.episode_rewards else 0.0
-                video_filename = os.path.join(self.save_path, f"offline_sim_ep{self.episode_count}_r{last_ep_reward:.2f}.mp4")
+                video_filename = os.path.join(self.save_path, f"offline_sim_{num_robots}_ep{self.episode_count}_r{last_ep_reward:.2f}.mp4")
                 if self.verbose > 0:
                     print(f"[OfflineVideoEveryNEpisodes] Generating offline simulation for episode {self.episode_count}...")
                 self.offline_playback(self.model, video_filename, self.episode_count, last_ep_reward)
@@ -90,7 +90,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         )
 
         fig, ax = plt.subplots()
-        scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
+        scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue', label='Robots')
         ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
         for obs in obstacles:
             if obs["type"] == "circle":
@@ -108,7 +108,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         beta = cost_w_obs
         current_K = K_base
         current_C = C_base
-        moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
+
         def animate(_frame):
             nonlocal positions, headings, velocities, local_step, alpha, beta, current_K, current_C
 
@@ -126,8 +126,6 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
                 t_positions = get_target_positions_triangle(moving_center, len(positions), new_fst)
             else:
                 t_positions = get_target_positions(moving_center, len(positions), new_fr)
-                
-            moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
             forces, updated_K, updated_C = compute_forces_with_sensors(
                 positions, headings, velocities,
@@ -150,7 +148,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
             local_step += 1
             if local_step >= max_frames or len(positions) == 0:
                 plt.close(fig)
-            return scatter, moving_center_marker
+            return scatter,
 
         ani = animation.FuncAnimation(fig, animate, frames=max_frames, interval=50, blit=False, repeat=False)
         ani.save(filename, writer="ffmpeg")
@@ -187,7 +185,7 @@ def final_offline_simulation(model):
     )
 
     fig, ax = plt.subplots()
-    scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
+    scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue')
     ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
     for obs in obstacles:
         if obs["type"] == "circle":
@@ -202,23 +200,17 @@ def final_offline_simulation(model):
     current_K = K_base
     current_C = C_base
 
-    moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
-    max_frames = num_steps * 4
-    
     def animate(frame):
         nonlocal positions, headings, velocities, alpha, beta, current_K, current_C
         global total_cost
 
-        # updated_positions, removed_indices = check_collisions(positions, obstacles)
-        # if removed_indices:
-        #     headings = np.delete(headings, removed_indices, axis=0)
-        #     velocities = np.delete(velocities, removed_indices, axis=0)
-        #     positions = updated_positions
-        
-        _ , removed_indices = check_collisions(np.copy(positions), obstacles)
-        scatter.set_offsets(positions)
-        count_text.set_text(f"Robots remaining: {num_robots - len(removed_indices)}")
-        
+        max_frames = num_steps*4
+        local_step = 0
+        updated_positions, removed_indices = check_collisions(positions, obstacles)
+        if removed_indices:
+            headings = np.delete(headings, removed_indices, axis=0)
+            velocities = np.delete(velocities, removed_indices, axis=0)
+            positions = updated_positions
 
         if len(positions) == 0:
             scatter.set_offsets([])
@@ -258,8 +250,6 @@ def final_offline_simulation(model):
 
         scatter.set_offsets(positions)
         count_text.set_text(f"Robots remaining: {len(positions)}")
-        
-        moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
         # Compute cost for logging
         psi = compute_swarm_alignment(headings)
@@ -284,9 +274,9 @@ def final_offline_simulation(model):
         C_values_over_time.append(current_C)
         alpha_values_over_time.append(alpha)
         beta_values_over_time.append(beta)
-        return scatter, moving_center_marker
+        return scatter,
 
-    ani = animation.FuncAnimation(fig, animate, frames=max_frames, interval=50, repeat=False)
+    ani = animation.FuncAnimation(fig, animate, frames=num_steps*4, interval=50, repeat=False)
     plt.show()
 
     print(f"Robots left after simulation: {len(positions)}")
@@ -345,7 +335,7 @@ def test_rl_policy(model):
     )
 
     fig, ax = plt.subplots()
-    scatter = ax.scatter(positions[:, 0], positions[:, 1],s = (robot_diameter * 500), c='blue')
+    scatter = ax.scatter(positions[:, 0], positions[:, 1], c='blue')
     ax.add_artist(plt.Circle(circle_center, circle_radius, color='black', fill=False))
     for obs in obstacles:
         if obs["type"] == "circle":
@@ -365,7 +355,7 @@ def test_rl_policy(model):
     total_cost = 0.0
 
     moving_center_marker = ax.scatter([], [], color='green', marker='o', s=100, label="Moving Center")
-    max_frames = num_steps * 4
+    max_frames = num_steps * 2
     
     for frame in range(max_frames):
 
@@ -459,7 +449,6 @@ def test_rl_policy(model):
             collisions
         ])
         
-    plt.show()
     
     print(f"Robots left after simulation: {len(positions)}")
     print(f"Final accumulated cost: {total_cost:.2f}")
@@ -475,11 +464,12 @@ def main():
       - Trains a PPO model with the offline video callback.
       - Saves the trained model and generates a final offline simulation.
     """
-    vec_env = make_vec_env(lambda: SwarmEnv(num_robots=num_robots, obstacle_level=obstacle_level, seed_value=42), n_envs=1)
+    # Create vectorized environment with the given swarm size.
+    vec_env = make_vec_env(lambda: SwarmEnv(seed_value=42), n_envs=1)
     model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
     level = f"Level{obstacle_level}"  # Change this to the appropriate level as needed
     save_path = f"./videos/{level}"
-    log_path = os.path.join(save_path, "episode_rewards_log.txt")
+    log_path = os.path.join(save_path, f"episode_rewards_log_{num_robots}.txt")
     video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path=save_path, log_path=log_path)
 
     # Clean existing logs and videos if desired
@@ -496,7 +486,7 @@ def main():
 
     last_ep = len(video_callback.episode_rewards)
     last_reward = video_callback.episode_rewards[-1] if last_ep > 0 else 0.0
-    final_video = os.path.join(save_path, f"final_offline_run_ep{last_ep}.mp4")
+    final_video = os.path.join(save_path, f"final_offline_swarm_{num_robots}_run_ep{last_ep}.mp4")
     print(f"Generating final offline playback for ep {last_ep} ...")
     video_callback.offline_playback(model, final_video, last_ep, last_reward)
 
@@ -512,23 +502,22 @@ def main():
     plt.ylabel("Average Reward")
     plt.title("Average Episode Rewards Over Training")
     plt.grid()
-    plt.savefig(os.path.join(save_path, "average_episode_rewards_log.png"))
-    plt.show()
 
     # print("\nRunning a final offline simulation for summary plots...\n")
     # final_offline_simulation(model)
     
-    # test the trained model
-    print("\nTesting the trained model...\n")
-    timestep_data = test_rl_policy(model)
-    # Create a CSV file for the timestep data
-    csv_save_path = os.path.join(save_path, "timestep_data.csv")
-    print(f"Saving timestep data to {csv_save_path}...")
-    with open(csv_save_path, 'w') as f:
-        f.write("Timestep,Alpha,Beta,K,C,AlignmentCost,PathCost,CollisionCost,ControlCost,TotalCost,Collisions\n")
-        for row in timestep_data:
-            f.write(",".join([str(r) for r in row]) + "\n")
-    print("CSV file saved.")
+    # Test the trained model 5 times and save CSV files for each run
+    for i in range(5):
+        print(f"\nTesting the trained model (Run {i+1})...\n")
+        timestep_data = test_rl_policy(model)
+        # Create a CSV file for the timestep data
+        csv_save_path = os.path.join(save_path, f"RL_swarm_{num_robots}_run_{i+1}.csv")
+        print(f"Saving timestep data to {csv_save_path}...")
+        with open(csv_save_path, 'w') as f:
+            f.write("Timestep,Alpha,Beta,K,C,AlignmentCost,PathCost,CollisionCost,ControlCost,TotalCost,Collisions\n")
+            for row in timestep_data:
+                f.write(",".join([str(r) for r in row]) + "\n")
+        print(f"CSV file for run {i+1} saved.")
     print("All done!")
 
 if __name__ == "__main__":

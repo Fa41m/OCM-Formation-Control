@@ -7,6 +7,7 @@ import time
 # Import your existing code
 from new_ocm import *
 from new_train_and_simulate import *
+from new_env import *
 
 # ===================================================================================
 # 1) Directory Setup
@@ -92,6 +93,8 @@ def run_simulation(num_robots_test, obstacle_level_test, alpha, beta, K, C, do_p
     alpha_values_over_time = [alpha_base]
     beta_values_over_time = [beta_base]
     cost_history = [0.0]
+    
+    total_steps = 1600
 
     # 4) Main simulation loop
     for frame in range(total_steps):
@@ -251,6 +254,8 @@ def run_simulation_with_logging(num_robots_test, obstacle_level_test, alpha, bet
     # List to store per-timestep cost data
     timestep_data = []
     collisions = 0
+    
+    total_steps = num_steps*2
 
     for frame in range(total_steps):
         updated_positions, removed_indices = check_collisions(positions, obstacles)
@@ -457,9 +462,9 @@ def run_heuristic_simulation():
     print("Running heuristic simulation...")
     # 2) For each obstacle level and swarm size, run PSO to find best parameters and log detailed cost info
     optimal_params_per_obstacle = {}
-    swarm_sizes = [10, 15, 20]
+    swarm_sizes = [10, 14, 15, 16, 20]
 
-    for level in range(5):
+    for level in range(4,5):
         optimal_params_per_swarm_size = {}
         for s_size in swarm_sizes:
             print(f"\n=== Running PSO for obstacle_level_{level} with swarm_size={s_size} ===")
@@ -519,7 +524,8 @@ def run_heuristic_simulation():
     print("\nAll experiments completed. Data logged in the Data/PSO/* directories.")
     total_elapsed_time = time.time() - start_time
     print(f"Total Time Elapsed: {total_elapsed_time:.2f} seconds")
-    
+
+# TODO: There is an issue where I can't globally change the parameters in the new_ocm.py file so have to manually test them 
 def run_rl_simulation():
     start_time = time.time()
     print("Running heuristic simulation...")
@@ -528,7 +534,8 @@ def run_rl_simulation():
     for level in range(5):
         for s_size in swarm_sizes:
             out_dir = os.path.join(RL_ROOT, f"obstacle_level_{level}")
-            vec_env = make_vec_env(lambda: SwarmEnv(num_robots=s_size, obstacle_level=level), n_envs=1)
+            # set_globals(s_size, level, alpha_base, beta_base, K_base, C_base)
+            vec_env = make_vec_env(lambda: SwarmEnv(swarm_size=s_size, obs_level= level,seed_value=42), n_envs=1)
             model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
             log_path = os.path.join(out_dir, "episode_rewards_log.txt")
             video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path=out_dir, log_path=log_path)
@@ -541,7 +548,7 @@ def run_rl_simulation():
                 os.remove(video_callback.log_path)
 
             print("Training the PPO model...")
-            model.learn(total_timesteps=400000, callback=video_callback)
+            model.learn(total_timesteps=40000, callback=video_callback)
             model.save(f"swarm_navigation_policy_{level}")
             print(f"Training complete. Model saved as 'swarm_navigation_policy_{level}'.")
 
@@ -580,8 +587,7 @@ def run_rl_simulation():
                     f.write("Timestep,Alpha,Beta,K,C,AlignmentCost,PathCost,CollisionCost,ControlCost,TotalCost,Collisions\n")
                     for row in timestep_data:
                         f.write(",".join([str(r) for r in row]) + "\n")
-                print("CSV file saved.")
-            print("All done!")
+                print(f"CSV file saved to {csv_save_path}")
             
     total_elapsed_time = time.time() - start_time
     print(f"Total Time Elapsed: {total_elapsed_time:.2f} seconds")
@@ -593,7 +599,7 @@ def main():
     # 1) Ensure directory structure
     ensure_directory_structure()
     run_heuristic_simulation()
-    run_rl_simulation()
+    # run_rl_simulation()
 
 if __name__ == "__main__":
     main()

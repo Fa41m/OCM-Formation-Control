@@ -7,7 +7,7 @@ import matplotlib.animation as animation
 # ---------------------------------------------
 formation_type = "circle"  # "circle" or "triangle"
 
-num_robots = 15
+num_robots = 20
 num_steps = 800
 
 robot_max_speed = 0.3
@@ -47,7 +47,7 @@ world_width = num_robots * 4
 world_boundary_tolerance = robot_diameter * 5
 
 # Obstacle Parameters
-obstacle_level = 1
+obstacle_level = 4
 num_obstacles = 3
 min_obstacle_size = world_width / 50
 max_obstacle_size = world_width / 25
