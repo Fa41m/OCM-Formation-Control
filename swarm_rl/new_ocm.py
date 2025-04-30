@@ -5,9 +5,9 @@ import matplotlib.animation as animation
 # ---------------------------------------------
 # Global Parameters
 # ---------------------------------------------
-formation_type = "triangle"  # "circle" or "triangle"
+formation_type = "circle"  # "circle" or "triangle"
 
-num_robots = 10
+num_robots = 15
 num_steps = 800
 
 robot_max_speed = 0.3
@@ -129,9 +129,9 @@ def get_moving_center(frame, total_frames, swarm_positions):
     expected_position = circle_center + circle_radius * np.array([np.cos(moving_theta), np.sin(moving_theta)])
     lag_distance = np.linalg.norm(swarm_center - expected_position)
 
-    lag_threshold = 5.0
+    lag_threshold = num_robots
     min_slow_factor = 0.05
-    max_lag_distance = 12.0
+    max_lag_distance = num_robots * 1.2
 
     if lag_distance > max_lag_distance:
         slow_factor = 0.0

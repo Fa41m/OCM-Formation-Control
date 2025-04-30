@@ -318,11 +318,12 @@ def main():
       - Trains a PPO model with the offline video callback.
       - Saves the trained model and generates a final offline simulation.
     """
+    # Create vectorized environment with the given swarm size.
     vec_env = make_vec_env(lambda: SwarmEnv(seed_value=42), n_envs=1)
     model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
     level = f"Level{obstacle_level}"  # Change this to the appropriate level as needed
     save_path = f"./videos/{level}"
-    log_path = os.path.join(save_path, "episode_rewards_log.txt")
+    log_path = os.path.join(save_path, f"episode_rewards_log_{num_robots}.txt")
     video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path=save_path, log_path=log_path)
 
     # Clean existing logs and videos if desired
@@ -333,13 +334,13 @@ def main():
         os.remove(video_callback.log_path)
 
     print("Training the PPO model...")
-    model.learn(total_timesteps=100000, callback=video_callback)
-    model.save("swarm_navigation_policy")
-    print("Training complete. Model saved as 'swarm_navigation_policy'.")
+    model.learn(total_timesteps=400000, callback=video_callback)
+    model.save(f"swarm_navigation_policy_{level}")
+    print(f"Training complete. Model saved as 'swarm_navigation_policy_{level}'.")
 
     last_ep = len(video_callback.episode_rewards)
     last_reward = video_callback.episode_rewards[-1] if last_ep > 0 else 0.0
-    final_video = os.path.join(save_path, f"final_offline_run_ep{last_ep}.mp4")
+    final_video = os.path.join(save_path, f"final_offline_swarm_{num_robots}_run_ep{last_ep}.mp4")
     print(f"Generating final offline playback for ep {last_ep} ...")
     video_callback.offline_playback(model, final_video, last_ep, last_reward)
 
@@ -355,8 +356,6 @@ def main():
     plt.ylabel("Average Reward")
     plt.title("Average Episode Rewards Over Training")
     plt.grid()
-    plt.savefig("average_episode_rewards_log.png")
-    plt.show()
 
     print("\nRunning a final offline simulation for summary plots...\n")
     final_offline_simulation(model)

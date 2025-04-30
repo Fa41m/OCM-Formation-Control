@@ -61,11 +61,6 @@ circle_radius = world_width / 4
 # ------------------------------------------------------
 # New Cost Function Weights (instead of old cost_w1, etc.)
 # ------------------------------------------------------
-# For Heuristic Cost Function:
-# cost_w_path  = 0.02   # weight for path-tracking error
-# cost_w_obs   = 1.0    # weight for obstacle proximity penalty
-# cost_w_align = 0.05   # weight for swarm alignment
-# cost_w_force = 0.005  # weight for control effort
 # For RL Cost Function:
 cost_w_path  = 0.05   # weight for path-tracking error
 cost_w_obs   = 10.0    # weight for obstacle proximity penalty

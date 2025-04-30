@@ -7,7 +7,7 @@ import matplotlib.animation as animation
 # ---------------------------------------------
 formation_type = "triangle"  # "circle" or "triangle"
 
-num_robots = 20
+num_robots = 40
 num_steps = 400
 
 # Baseline repulsion strengths

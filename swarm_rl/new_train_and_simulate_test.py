@@ -47,28 +47,44 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         self.save_path = save_path
         self.log_path = log_path
         os.makedirs(save_path, exist_ok=True)
-        self.episode_reward = 0.0
-        self.episode_rewards = []
         self.episode_count = 0
+        self.completed_envs = 0
+        self.collected_rewards = []
+        
+    def _on_training_start(self) -> None:
+        self.n_envs = self.training_env.num_envs
+        self.episode_rewards = [0.0 for _ in range(self.n_envs)]
 
     def _on_step(self) -> bool:
-        reward = self.locals["rewards"][0]
-        done = self.locals["dones"][0]
-        self.episode_reward += reward
+        rewards = self.locals["rewards"]
+        dones = self.locals["dones"]
 
-        if done:
-            self.episode_count += 1
-            with open(self.log_path, "a") as f:
-                f.write(f"Episode {self.episode_count}, Reward: {self.episode_reward}\n")
-            self.episode_rewards.append(self.episode_reward)
-            self.episode_reward = 0.0
+        for i in range(self.n_envs):
+            self.episode_rewards[i] += rewards[i]
 
-            if (self.episode_count % self.video_episode_freq) == 0:
-                last_ep_reward = self.episode_rewards[-1] if self.episode_rewards else 0.0
-                video_filename = os.path.join(self.save_path, f"offline_sim_{num_robots}_ep{self.episode_count}_r{last_ep_reward:.2f}.mp4")
-                if self.verbose > 0:
-                    print(f"[OfflineVideoEveryNEpisodes] Generating offline simulation for episode {self.episode_count}...")
-                self.offline_playback(self.model, video_filename, self.episode_count, last_ep_reward)
+            if dones[i]:
+                final_reward = self.episode_rewards[i]
+                self.episode_rewards[i] = 0.0
+                self.collected_rewards.append(final_reward)
+                self.episode_count += 1
+
+                # Compute running average reward
+                avg_reward = np.mean(self.collected_rewards[-self.n_envs:])  # avg of most recent episodes (1 per env)
+
+                # Log current and average reward
+                with open(self.log_path, "a") as f:
+                    f.write(f"Episode {self.episode_count}, Reward: {avg_reward:.2f}\n")
+
+                # Optionally generate offline video
+                if self.episode_count % self.video_episode_freq == 0:
+                    filename = os.path.join(
+                        self.save_path,
+                        f"offline_sim_ep{self.episode_count}_avg{avg_reward:.2f}.mp4"
+                    )
+                    if self.verbose > 0:
+                        print(f"[OfflineVideoEveryNEpisodes] Generating video at ep {self.episode_count} | AvgReward: {avg_reward:.2f}")
+                    self.offline_playback(self.model, filename, self.episode_count, avg_reward)
+
         return True
 
     def offline_playback(self, model, filename, episode_idx, last_ep_reward):
@@ -465,12 +481,12 @@ def main():
       - Saves the trained model and generates a final offline simulation.
     """
     # Create vectorized environment with the given swarm size.
-    vec_env = make_vec_env(lambda: SwarmEnv(seed_value=42), n_envs=1)
+    vec_env = make_vec_env(lambda i=0: SwarmEnv(seed_value=42 + i), n_envs=8)
     model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
     level = f"Level{obstacle_level}"  # Change this to the appropriate level as needed
     save_path = f"./videos/{level}"
     log_path = os.path.join(save_path, f"episode_rewards_log_{num_robots}.txt")
-    video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=10, save_path=save_path, log_path=log_path)
+    video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=25, save_path=save_path, log_path=log_path)
 
     # Clean existing logs and videos if desired
     if os.path.exists(video_callback.save_path):
