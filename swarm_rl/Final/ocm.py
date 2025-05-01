@@ -5,7 +5,7 @@ import matplotlib.animation as animation
 # Global Parameters
 formation_type = "circle"  # "circle" or "triangle"
 
-num_robots = 30
+num_robots = 15
 num_steps = 800
 
 robot_max_speed = 0.3

@@ -121,11 +121,11 @@ class SwarmEnv(gym.Env):
         self.headings = np.random.uniform(0, 2*np.pi, num_robots)
         self.velocities = np.zeros_like(self.positions)
 
-        # track angles for path-following
+        # Track angles for path-following
         self.current_angle_accum = 0.0
         self.last_angle_accum = 0.0
 
-        # figure out swarm center
+        # Figure out swarm center
         swarm_center = np.mean(self.positions, axis=0)
         rel = swarm_center - self.circle_center
         self.last_angle = np.arctan2(rel[1], rel[0])
@@ -145,8 +145,6 @@ class SwarmEnv(gym.Env):
             self.headings.flatten(),
             self.velocities.flatten()
         ])
-        
-    
 
     # This function is called by the RL agent to take a step in the environment.
     def step(self, action):
@@ -250,7 +248,7 @@ class SwarmEnv(gym.Env):
         if abs(self.current_angle_accum) >= self.max_angle:
             done = True
 
-        # # Termination conditions (as before).
+        # Termination conditions
         truncated = False
         self.steps += 1
         if self.steps >= (num_steps * 4):

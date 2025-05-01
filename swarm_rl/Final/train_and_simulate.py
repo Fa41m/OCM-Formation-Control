@@ -159,7 +159,7 @@ class OfflineVideoEveryNEpisodes(BaseCallback):
         plt.close(fig)
         print(f"[OfflineVideoEveryNEpisodes] Video saved as {filename}")
 
-# Final Offline Simulation for Summary Plots
+# Final Offline Simulation with Summary Plots
 def final_offline_simulation(model):
     # Clear global arrays for plotting if needed
     K_values_over_time.clear()
@@ -249,7 +249,7 @@ def final_offline_simulation(model):
         scatter.set_offsets(positions)
         count_text.set_text(f"Robots remaining: {len(positions)}")
 
-        # Compute cost for logging
+        # Compute cost so that it can be logged
         psi = compute_swarm_alignment(headings)
         alignment_cost = cost_w_align * (1.0 - psi)**2
         path_errors = np.linalg.norm(positions - t_positions, axis=1)
@@ -280,6 +280,7 @@ def final_offline_simulation(model):
     print(f"Robots left after simulation: {len(positions)}")
     print(f"Final accumulated cost: {total_cost:.2f}")
 
+    # Plotting the results
     plt.figure(figsize=(10, 6))
     plt.plot(K_values_over_time, label='Alignment (K)', color='blue')
     plt.plot(C_values_over_time, label='Cohesion (C)', color='green')
@@ -308,7 +309,6 @@ def final_offline_simulation(model):
     
 # Method to test the trained RL policy on a new instance of the environment
 def test_rl_policy(model):
-    # Clear global arrays for plotting if needed
     K_values_over_time.clear()
     C_values_over_time.clear()
     alpha_values_over_time.clear()
@@ -447,24 +447,28 @@ def test_rl_policy(model):
 def main():
     # Create vectorized environment with the given swarm size.
     vec_env = make_vec_env(lambda i=0: SwarmEnv(seed_value=42 + i), n_envs=8)
+    # Create the PPO model with the vectorized environment.
     model = PPO("MlpPolicy", vec_env, verbose=1, device="cpu")
+    # Train the PPO model on the Level found in OCM
     level = f"Level{obstacle_level}"
     save_path = f"./videos/{level}"
     log_path = os.path.join(save_path, f"episode_rewards_log_{num_robots}.txt")
     video_callback = OfflineVideoEveryNEpisodes(video_episode_freq=25, save_path=save_path, log_path=log_path)
 
-    # Clean existing logs and videos if desired
+    # Clean existing logs and videos
     if os.path.exists(video_callback.save_path):
         for file in os.listdir(video_callback.save_path):
             os.remove(os.path.join(video_callback.save_path, file))
     if os.path.exists(video_callback.log_path):
         os.remove(video_callback.log_path)
 
+    # Begin training the PPO model
     print("Training the PPO model...")
     model.learn(total_timesteps=400000, callback=video_callback)
     model.save(f"swarm_navigation_policy_{level}")
     print(f"Training complete. Model saved as 'swarm_navigation_policy_{level}'.")
 
+    # Generate final offline video playback for the last episode
     last_ep = len(video_callback.episode_rewards)
     last_reward = video_callback.episode_rewards[-1] if last_ep > 0 else 0.0
     final_video = os.path.join(save_path, f"final_offline_swarm_{num_robots}_run_ep{last_ep}.mp4")
@@ -475,6 +479,7 @@ def main():
         lines = f.readlines()
         episode_rewards = [float(line.split()[-1]) for line in lines]
 
+    # Plotting the average rewards over episodes
     window_size = 10
     avg_rewards = [np.mean(episode_rewards[i:i+window_size]) for i in range(0, len(episode_rewards), window_size)]
     plt.figure()

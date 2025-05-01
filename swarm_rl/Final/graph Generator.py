@@ -15,6 +15,7 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 
+# Function to plot the PPO's learning curve
 def plot_episode_rewards(log_dir, output_dir):
     reward_files = glob(os.path.join(log_dir, "episode_rewards_log_*.txt"))
     reward_data = {}
@@ -37,8 +38,7 @@ def plot_episode_rewards(log_dir, output_dir):
         if episodes and rewards:
             df = pd.DataFrame({'Episode': episodes, 'Reward': rewards})
             reward_data[num_robots] = df
-
-    # === Smoothing ===
+            
     smoothed_data = {}
     window = 10
 
@@ -51,8 +51,8 @@ def plot_episode_rewards(log_dir, output_dir):
         df['Smoothed'] = df['Reward'].rolling(window=window, min_periods=1).mean()
         smoothed_data[num_robots] = df
 
-    # === Split-view Plot ===
-    fig, axs = plt.subplots(1, 2, figsize=(14, 8))  # No shared Y-axis
+    # Split the plot into two subplots for early and late training
+    fig, axs = plt.subplots(1, 2, figsize=(14, 8))
     
     fig.suptitle("PPO Episode Rewards", fontsize=20, weight='bold')
 
@@ -60,15 +60,14 @@ def plot_episode_rewards(log_dir, output_dir):
         color = colors[num_robots]
         label = f"{num_robots} robots"
 
-        # Early training (Episodes 0–30)
+        # Early training (Episodes 0–60)
         early = df[df['Episode'] <= 60]
         axs[0].plot(early['Episode'], early['Smoothed'], label=label, color=color, linewidth=2)
 
-        # Late training (Episodes >30)
+        # Late training (Episodes >60)
         late = df[df['Episode'] > 60]
         axs[1].plot(late['Episode'], late['Smoothed'], label=label, color=color, linewidth=2)
 
-    # Axis labels and styling
     axs[0].set_title("Early Training (Episodes 0–60)", fontsize=18, weight='bold')
     axs[1].set_title("Late Training (Episodes 61–End)", fontsize=18, weight='bold') 
     for ax in axs:
@@ -84,7 +83,7 @@ def plot_episode_rewards(log_dir, output_dir):
     plt.close()
 
     # Save legend as a separate image
-    fig_legend = plt.figure(figsize=(4, 3))  # Increased size
+    fig_legend = plt.figure(figsize=(4, 3)) 
     handles, labels = axs[1].get_legend_handles_labels()
     fig_legend.legend(handles, labels, title="Swarm Size", title_fontsize=20, fontsize=18, loc='center')
     legend_path = os.path.join(output_dir, "legend_swarm_sizes.png")
@@ -94,6 +93,7 @@ def plot_episode_rewards(log_dir, output_dir):
     print(f"Reward plot (no std) saved to: {output_path}")
     print(f"Legend saved to: {legend_path}")
 
+# Function to plot the episode rewards for RL data
 def rl_graphs():
     data_dir = "./Data/RL/obstacle_level_4"
     pattern = r"RL_swarm_(\d+)_run_(\d)\.csv"
@@ -118,6 +118,7 @@ def rl_graphs():
     
     summary_records = []
 
+    # Build a dataframe for each robot count
     for num_robots, file_list in files_by_robot_count.items():
         print(f"Processing {len(file_list)} files for {num_robots} robots")
 
@@ -189,7 +190,7 @@ def rl_graphs():
             else:
                 r2 = np.nan
                 
-            # AUC calculations (using trapezoidal rule)
+            # Area under curve calculations
             if 'ControlCost' in clean_df.columns:
                 auc_control = np.trapz(clean_df['ControlCost'].values, clean_df['Timestep'].values)
             else:
@@ -202,6 +203,7 @@ def rl_graphs():
                 
             collisions_per_robot = collisions / num_robots if pd.notna(collisions) else np.nan
 
+            # Store summary statistics
             summary_records.append({
                 'swarm_size': num_robots,
                 'run_id': run_idx + 1,
@@ -215,15 +217,14 @@ def rl_graphs():
                 'collisions_per_robot': collisions_per_robot
             })
 
-    # Define a consistent colormap for all graphs
     unique_robot_counts = sorted(processed_data[next(iter(processed_data))].keys())
     colors = {num_robots: cm.tab10(idx % 10) for idx, num_robots in enumerate(unique_robot_counts)}
-    # === Plot metric over Timestep ===
+    
+    # Plot each metric over Timestep
     for col_name, robot_data in processed_data.items():
         plt.figure(figsize=(12, 6))
 
         for num_robots, (timesteps, mean_vals, std_vals) in sorted(robot_data.items()):
-            # Smooth
             mean_vals = pd.Series(mean_vals).rolling(50, min_periods=1).mean().values
             std_vals = pd.Series(std_vals).rolling(50, min_periods=1).mean().values
 
@@ -232,7 +233,7 @@ def rl_graphs():
 
         plt.legend(loc="best", fontsize=18)
         plt.grid(True, linestyle="--", alpha=0.5)
-        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.95])  # Adjust rect to prevent cutoff
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.95])
         plt.xlabel("Timestep [s]", fontsize=18, weight='bold')
         plt.ylabel(col_name, fontsize=18, weight='bold')
         plt.title(f"{col_name} vs Timestep for Different Robot Counts", weight='bold', fontsize=20)
@@ -252,6 +253,7 @@ def rl_graphs():
         'ytick.labelsize': 11
     })
 
+    # Plot graphs related to the performance metrics
     for metric in ['auc_control_cost', 'auc_alignment_cost', 'collisions_per_robot', 'r2_total_cost']:
         grouped = summary_df.groupby('swarm_size')[metric]
         means = grouped.mean()
@@ -261,13 +263,12 @@ def rl_graphs():
         x = np.arange(len(swarm_sizes))
         colors_list = [colors[int(num_robots)] for num_robots in swarm_sizes]
 
+        # Plot a stripplot for collisions_per_robot
         if metric == 'collisions_per_robot':
             plt.figure(figsize=(10, 6))
 
             summary_df['swarm_size'] = summary_df['swarm_size'].astype(str)  # Ensure matching types
             palette = {str(size): colors[int(size)] for size in summary_df['swarm_size'].unique()}
-
-
 
             sns.stripplot(
                 x='swarm_size',
@@ -323,6 +324,7 @@ def rl_graphs():
             plt.savefig(plot_filename, dpi=300)
             plt.close()
         
+    # Metrics to test for ANOVA and Tukey
     metrics_to_test = ['total_cost', 'collisions', 'auc_control_cost', 'auc_alignment_cost', 'r2_total_cost']
     
     # save the summary dataframe to a CSV file
@@ -336,23 +338,24 @@ def rl_graphs():
     print(f"Average metrics per swarm size saved to {avg_csv_path}")
     print(f"Summary statistics saved to {summary_csv_path}")
 
-
+    # Run ANOVA and Tukey tests for each metric
     for metric in metrics_to_test:
-        print(f"\n===== Analyzing {metric} =====")
+        print(f"\nAnalyzing {metric}")
         run_anova_and_tukey(
-            df_long=summary_df.rename(columns={'swarm_size': 'group'}),  # rename for formula compatibility
+            df_long=summary_df.rename(columns={'swarm_size': 'group'}),
             metric_col=metric,
             group_col='group',
             output_dir=output_dir
         )
 
-
+# Function to Build the PSO graphs
 def pso_graphs():
     data_dir = "./Data/PSO/obstacle_level_4"
     pattern = r"optimal_run_swarm_(\d+)_run_(\d)\.csv"
 
     files_by_robot_count = {}
 
+    # Get all files matching the pattern
     for filepath in glob(os.path.join(data_dir, "optimal_run_swarm_*.csv")):
         filename = os.path.basename(filepath)
         match = re.match(pattern, filename)
@@ -404,7 +407,7 @@ def pso_graphs():
                 std_data[:, col_idx]
             )
 
-        # === R² calculation for total_cost vs timestep ===
+        # R² calculation for total_cost over timestep 
         r2_list = []
         for df in dataframes:
             if 'total_cost' in df.columns and 'timestep' in df.columns:
@@ -420,7 +423,6 @@ def pso_graphs():
             r2_scores_by_robot[num_robots] = r2_list
            
         # Dataframe for Anova and Tukey 
-        
         for run_idx, df in enumerate(dataframes):
             clean_df = df.dropna()
 
@@ -442,7 +444,7 @@ def pso_graphs():
             else:
                 r2 = np.nan
                 
-            # AUC calculations (using trapezoidal rule)
+            # Area under curve calculations
             if 'control_cost' in clean_df.columns:
                 auc_control = np.trapz(clean_df['control_cost'].values, clean_df['timestep'].values)
             else:
@@ -455,6 +457,7 @@ def pso_graphs():
 
             collisions_per_robot = collisions / num_robots if pd.notna(collisions) else np.nan
 
+            # Store summary statistics
             summary_records.append({
                 'swarm_size': num_robots,
                 'run_id': run_idx + 1,
@@ -468,11 +471,10 @@ def pso_graphs():
                 'collisions_per_robot': collisions_per_robot
             })
 
-    # Define a consistent colormap for all graphs
     unique_robot_counts = sorted(processed_data[next(iter(processed_data))].keys())
     colors = {num_robots: cm.tab10(idx % 10) for idx, num_robots in enumerate(unique_robot_counts)}
 
-    # === Plot metrics over timestep (with smoothing & styling) ===
+    # Plot the metrics over timestep
     for col_name, robot_data in processed_data.items():
         plt.figure(figsize=(12, 6))
 
@@ -486,7 +488,7 @@ def pso_graphs():
 
         plt.legend(loc="best", fontsize=18)
         plt.grid(True, linestyle="--", alpha=0.5)
-        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.95])  # Adjust rect to prevent cutoff
+        plt.tight_layout(rect=[0.03, 0.03, 0.97, 0.95]) 
         plt.xlabel("Timestep [s]", fontsize=18, weight='bold')
         plt.ylabel(col_name, fontsize=18, weight='bold')
         plt.title(f"{col_name} vs Timestep for Different Robot Counts", weight='bold', fontsize=20)
@@ -508,6 +510,7 @@ def pso_graphs():
         'ytick.labelsize': 11
     })
 
+    # Plot graphs related to the performance metrics
     for metric in ['auc_control_cost', 'auc_alignment_cost', 'collisions_per_robot', 'r2_total_cost']:
         grouped = summary_df.groupby('swarm_size')[metric]
         means = grouped.mean()
@@ -517,14 +520,13 @@ def pso_graphs():
         x = np.arange(len(swarm_sizes))
         colors_list = [colors[int(num_robots)] for num_robots in swarm_sizes]
 
+        # Stripplot for collisions_per_robot
         if metric == 'collisions_per_robot':
             plt.figure(figsize=(10, 6))
 
-            summary_df['swarm_size'] = summary_df['swarm_size'].astype(str)  # Ensure matching types
+            summary_df['swarm_size'] = summary_df['swarm_size'].astype(str)
             palette = {str(size): colors[int(size)] for size in summary_df['swarm_size'].unique()}
-
-
-
+            
             sns.stripplot(
                 x='swarm_size',
                 y='collisions_per_robot',
@@ -545,7 +547,6 @@ def pso_graphs():
             plt.tight_layout()
             plt.savefig(plot_filename, dpi=300)
             plt.close()
-
 
         else:
             # Use normal plotting for all other metrics
@@ -579,6 +580,7 @@ def pso_graphs():
             plt.savefig(plot_filename, dpi=300)
             plt.close()
     
+    # Metrics to test for ANOVA and Tukey
     metrics_to_test = ['total_cost', 'collisions', 'auc_control_cost', 'auc_alignment_cost', 'r2_total_cost']
     
     # save the summary dataframe to a CSV file
@@ -590,28 +592,30 @@ def pso_graphs():
     print(f"Summary statistics saved to {summary_csv_path}")
 
     for metric in metrics_to_test:
-        print(f"\n===== Analyzing {metric} =====")
+        print(f"\nAnalyzing {metric}")
         run_anova_and_tukey(
             df_long=summary_df.rename(columns={'swarm_size': 'group'}),
             metric_col=metric,
             group_col='group',
             output_dir=output_dir
         )
-        
+
+# Function to run ANOVA and Tukey HSD tests
 def run_anova_and_tukey(df_long, metric_col="value", group_col="group", alpha=0.05, output_dir="./"):
     model = ols(f"{metric_col} ~ C({group_col})", data=df_long).fit()
     anova_table = sm.stats.anova_lm(model, typ=2)
 
     # Save ANOVA results
-    # anova_csv_path = os.path.join(output_dir, f"anova_{metric_col}.csv")
     safe_name = metric_col.replace(" ", "_").replace("/", "_")
 
     anova_csv_path = os.path.join(output_dir, f"anova_{safe_name}.csv")
     anova_table.to_csv(anova_csv_path)
-    print(f"📄 ANOVA result saved to {anova_csv_path}")
+    print(f"ANOVA result saved to {anova_csv_path}")
 
     p_value = anova_table["PR(>F)"][0]
+    # Check if p-value is significant
     if p_value < alpha:
+        # Perform Tukey HSD test
         tukey = pairwise_tukeyhsd(endog=df_long[metric_col], groups=df_long[group_col], alpha=alpha)
         tukey_df = pd.DataFrame(data=tukey._results_table.data[1:], columns=tukey._results_table.data[0])
 
@@ -622,6 +626,7 @@ def run_anova_and_tukey(df_long, metric_col="value", group_col="group", alpha=0.
     else:
         print(f"No significant difference in '{metric_col}' (p = {p_value:.4f})")
         
+# Builds the tables for PSO for anova and tukey
 def build_tables_pso():
     input_dir = "./Data/PSO/obstacle_level_4/plots_combined"
     # Define file paths
@@ -662,15 +667,6 @@ def build_tables_pso():
         sigs = df[df['reject'] == True]
         # Check for "all pairwise"
         total_pairs = df.shape[0]
-        # if sigs.shape[0] == total_pairs:
-        #     tukey_summary.append({
-        #         'Metric': metric,
-        #         'Comparison': 'All pairwise',
-        #         'Mean Difference': '',
-        #         'Adj. p value': '',
-        #         'Direction': ''
-        #     })
-        # else:
         for _, r in sigs.iterrows():
             comp = f"{int(r['group1'])} vs {int(r['group2'])}"
             md = round(r['meandiff'], 4)
@@ -697,6 +693,7 @@ def build_tables_pso():
     print(f"ANOVA summary saved as image: {anova_image_path}")
     print(f"Tukey HSD summary saved as image: {tukey_image_path}")
 
+# Builds the tables for PPO for anova and tukey
 def build_tables_ppo():
     input_dir = "./Data/RL/obstacle_level_4/plots_combined"
     # Define file paths
@@ -735,17 +732,6 @@ def build_tables_ppo():
     for metric, path in tukey_files.items():
         df = pd.read_csv(path)
         sigs = df[df['reject'] == True]
-        # Check for "all pairwise"
-        # total_pairs = df.shape[0]
-        # if sigs.shape[0] == total_pairs:
-        #     tukey_summary.append({
-        #         'Metric': metric,
-        #         'Comparison': 'All pairwise',
-        #         'Mean Difference': '',
-        #         'Adj. p value': '',
-        #         'Direction': ''
-        #     })
-        # else:
         for _, r in sigs.iterrows():
             comp = f"{int(r['group1'])} vs {int(r['group2'])}"
             md = round(r['meandiff'], 4)
