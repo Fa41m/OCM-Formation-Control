@@ -204,7 +204,8 @@ def main():
                 formation_type,
                 obstacle_level,
                 num_robots=ocm.num_robots,
-                num_steps=ocm.num_steps,  # or use a shorter run like 400 if you prefer
+                # num_steps=ocm.num_steps,  # or use a shorter run like 400 if you prefer
+                num_steps=1600,  # or use a shorter run like 400 if you prefer
                 world_width_=ocm.world_width,
                 robot_max_speed_=ocm.robot_max_speed,
                 world_boundary_tolerance_=ocm.world_boundary_tolerance,
