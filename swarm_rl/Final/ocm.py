@@ -562,7 +562,7 @@ def main():
         count_text.set_text(f"Robots remaining: {len(positions)}")
 
         # Update moving center marker
-        moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
+        # moving_center_marker.set_offsets([moving_center[0], moving_center[1]])
 
         # COST FUNCTION: path + collision + alignment + control effort
 
@@ -600,7 +600,8 @@ def main():
         alpha_values_over_time.append(alpha)
         beta_values_over_time.append(beta)
 
-        return scatter, moving_center_marker
+        # return scatter, moving_center_marker
+        return scatter
 
     ani = animation.FuncAnimation(fig, animate, frames=num_steps, interval=100, repeat=True)
     plt.show()
